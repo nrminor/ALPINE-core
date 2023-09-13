@@ -62,8 +62,8 @@ async fn run() -> Result<()> {
             Ok(())
         },
         Some(Commands::SeparateByMonth { fasta, metadata}) => {
-            let accession_to_date = filtering::date_accessions(&metadata);
-            let _ = filtering::separate_by_month(&fasta, accession_to_date.unwrap())?;
+            let accession_to_date = filtering::date_accessions(&metadata)?;
+            let _ = filtering::separate_by_month(&fasta, accession_to_date)?;
             Ok(())
         },
         None => {
