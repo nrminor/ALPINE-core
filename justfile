@@ -1,0 +1,2 @@
+just default:
+    just --list

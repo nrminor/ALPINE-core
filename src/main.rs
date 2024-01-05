@@ -1,3 +1,4 @@
+use alpine::lib::distmat::DistanceMethods;
 use alpine::lib::*;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -34,6 +35,15 @@ enum Commands {
         fasta: String,
         metadata: String,
     },
+
+    DistanceMatrix {
+        #[arg(required = true)]
+        fasta: String,
+        cluster_table: String,
+        yearmonth: String,
+        stringency: String,
+        distance_method: DistanceMethods,
+    },
 }
 
 pub fn print_errors(response: Result<()>) {
@@ -57,6 +67,10 @@ async fn run() -> Result<()> {
         Some(Commands::SeparateByMonth { fasta, metadata }) => {
             let accession_to_date = filtering::date_accessions(metadata)?;
             filtering::separate_by_month(fasta, accession_to_date)?;
+            Ok(())
+        }
+        Some(Commands::DistanceMatrix { .. }) => {
+            distmat::compute_distance_matrix()?;
             Ok(())
         }
         None => {
