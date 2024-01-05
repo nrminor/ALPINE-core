@@ -19,6 +19,14 @@ pub enum DistanceMethods {
     Jaccard,
 }
 
+#[derive(ValueEnum, Debug, Clone, PartialEq)]
+pub enum Stringency {
+    Lenient,
+    Intermediate,
+    Strict,
+    Extreme,
+}
+
 trait DistanceCalculator {
     fn calculate_distance(&self, s1: &str, s2: &str) -> f64;
 }

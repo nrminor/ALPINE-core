@@ -1,4 +1,4 @@
-use alpine::lib::distmat::DistanceMethods;
+use alpine::lib::distmat::{DistanceMethods, Stringency};
 use alpine::lib::*;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -41,7 +41,7 @@ enum Commands {
         fasta: String,
         cluster_table: String,
         yearmonth: String,
-        stringency: String,
+        stringency: Stringency,
         distance_method: DistanceMethods,
     },
 }
