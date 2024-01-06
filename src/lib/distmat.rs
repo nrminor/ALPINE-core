@@ -1,4 +1,5 @@
 use clap::ValueEnum;
+use displaydoc::Display;
 use std::io;
 use textdistance::{
     nstr::{lcsseq, lcsstr},
@@ -6,16 +7,33 @@ use textdistance::{
     str::{hamming, jaccard},
 };
 
-#[derive(ValueEnum, Debug, Clone, PartialEq)]
+#[derive(ValueEnum, Debug, Clone, PartialEq, Display)]
 pub enum DistanceMethods {
+    /// Hamming edit distance
     Hamming,
+
+    /// Levenshtein edit distance
     Levenshtein,
+
+    /// Damerau-Levenshtein edit distance
     DamerauLevenshtein,
+
+    /// Jaro-Winkler edit distance
     JaroWinkler,
+
+    /// Smith-Waterman edit distance
     SmithWaterman,
+
+    /// Ratcliff-Obershelp/Gestalt pattern matching sequence-based distance
     RatcliffObershelp,
+
+    /// Longest Common SubSequence distance
     LCSSeq,
+
+    /// Longest Common SubString
     LCSStr,
+
+    /// Jaccard token/kmer-based distance
     Jaccard,
 }
 

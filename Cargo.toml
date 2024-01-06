@@ -11,6 +11,7 @@ arrow = "46.0.0"
 bio = "1.4.0"
 chrono = "0.4.30"
 clap = { version = "4.4.3", features = ["derive", "cargo"]}
+displaydoc = "0.2.4"
 distmat = "0.3.0"
 polars = "0.32.1"
 polars-io = "0.32.1"
