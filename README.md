@@ -10,3 +10,5 @@ alpine replace-gaps <FASTA>
 
 alpine separate-by-month <FASTA> <METADATA>
 ```
+
+To set up and try out the toolset, either install the Rust toolchain and build it yourself or run `./easy_install` in this directory after cloning it to your machine.
