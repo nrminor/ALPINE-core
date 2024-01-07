@@ -32,8 +32,8 @@ similar analyses themselves via the command line.
 #[clap(name = "alpine")]
 #[clap(about = INFO)]
 struct Cli {
-    #[arg(short, long, action = clap::ArgAction::Count)]
-    verbose: u8,
+    #[command(flatten)]
+    verbose: clap_verbosity_flag::Verbosity,
 
     #[arg(short, long, default_value_t = 3, required = false)]
     threads: u8,
