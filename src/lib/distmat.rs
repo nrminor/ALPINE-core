@@ -104,7 +104,6 @@ fn _weight_by_cluster_size(
     };
 
     // find cluster size for the accession in question
-    // cluster_freq = filter(:9 => x -> x == seq_name, centroids)[:, 3][1] / month_total
     let weighting_size = centroid_lf
         .clone()
         .filter(col(seq_names).eq(lit(seq_name)))
@@ -115,12 +114,13 @@ fn _weight_by_cluster_size(
         .next()
         .unwrap()
         .try_extract::<f64>()?;
-    let weighting_freq = (weighting_size / month_total) * -1.0;
+    let weighting_freq = weighting_size / month_total;
 
     // compute weights lazyframe column
     let weights_lf = if stringency == "strict" || stringency == "extreme" {
         all_sizes.with_column(
-            (col(cluster_sizes) * lit(weighting_freq.ln())) / lit(month_total).alias("Weights"),
+            (col(cluster_sizes) * lit(weighting_freq.ln() * -1.0))
+                / lit(month_total).alias("Weights"),
         )
     } else {
         all_sizes.with_column((lit(1) - col(cluster_sizes)) / lit(month_total).alias("Weights"))
@@ -135,7 +135,14 @@ fn _weight_by_cluster_size(
     Ok(weights_lf)
 }
 
-pub fn compute_distance_matrix() -> io::Result<()> {
+pub fn compute_distance_matrix(
+    _fasta: &str,
+    _cluster_table: &str,
+    _yearmonth: &str,
+    _stringency: &Stringency,
+    _distance_method: &DistanceMethods,
+) -> io::Result<()> {
     println!("API for computing a pairwise distance matrix using one of a few kinds of edit distances coming soon!");
+    // DistMatrix::from_pw_distances_with(&fasta_seq_vec, |seq1, seq2| distance_method.calculate_distance(seq1, seq2));
     Ok(())
 }

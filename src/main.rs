@@ -33,7 +33,10 @@ similar analyses themselves via the command line.
 #[clap(about = INFO)]
 struct Cli {
     #[arg(short, long, action = clap::ArgAction::Count)]
-    debug: u8,
+    verbose: u8,
+
+    #[arg(short, long, default_value_t = 3, required = false)]
+    threads: u8,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -113,8 +116,20 @@ async fn run() -> Result<()> {
             filtering::separate_by_month(fasta, accession_to_date)?;
             Ok(())
         }
-        Some(Commands::DistanceMatrix { .. }) => {
-            distmat::compute_distance_matrix()?;
+        Some(Commands::DistanceMatrix {
+            fasta,
+            cluster_table,
+            yearmonth,
+            stringency,
+            distance_method,
+        }) => {
+            distmat::compute_distance_matrix(
+                fasta,
+                cluster_table,
+                yearmonth,
+                stringency,
+                distance_method,
+            )?;
             Ok(())
         }
         None => {
@@ -125,7 +140,8 @@ async fn run() -> Result<()> {
 }
 
 fn main() {
-    let ncores = 4;
+    // Parse the number of threads to use
+    let ncores = Cli::parse().threads as usize;
 
     let runtime = Builder::new_multi_thread()
         .worker_threads(ncores)
