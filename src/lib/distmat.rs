@@ -1,5 +1,7 @@
+use anyhow::Result;
 use clap::ValueEnum;
 use displaydoc::Display;
+use polars::{lazy::dsl::col, prelude::*};
 use std::io;
 use textdistance::{
     nstr::{lcsseq, lcsstr},
@@ -65,7 +67,73 @@ impl DistanceCalculator for DistanceMethods {
     }
 }
 
-fn _weight_by_cluster_size() {}
+fn _weight_by_cluster_size(
+    seq_name: &str,
+    stringency: &str,
+    dist_df: &LazyFrame,
+    cluster_table: &LazyFrame,
+) -> Result<LazyFrame> {
+    // separate out the columns of information we need
+    let cluster_query = cluster_table.clone().collect()?;
+    let col_names = &cluster_query.get_column_names();
+    let member_types = col_names.first().unwrap();
+    let seq_names = col_names.get(8).unwrap();
+    let cluster_sizes = col_names.get(2).unwrap();
+
+    // Filter down the df so that only rows representing centroids are present
+    let centroid_lf = cluster_table
+        .clone()
+        .filter(col(member_types).eq(lit("C")))
+        .sort(seq_name, Default::default());
+
+    // extract a frame of cluster sizes that are in the same order as the sequences in the distance matrix
+    let all_sizes = centroid_lf
+        .clone()
+        .select([col(cluster_sizes), col(seq_names)]);
+
+    // Filter down to hits only and use to get a total number of sequences for the current month
+    let hits_df = cluster_table
+        .clone()
+        .filter(col(member_types).eq(lit("H")))
+        .sort(seq_name, Default::default())
+        .collect()?;
+    let month_total = if hits_df.shape().0 == 0 {
+        1.0
+    } else {
+        hits_df.shape().0 as f64
+    };
+
+    // find cluster size for the accession in question
+    // cluster_freq = filter(:9 => x -> x == seq_name, centroids)[:, 3][1] / month_total
+    let weighting_size = centroid_lf
+        .clone()
+        .filter(col(seq_names).eq(lit(seq_name)))
+        .select([col(cluster_sizes)])
+        .collect()?
+        .column(cluster_sizes)?
+        .iter()
+        .next()
+        .unwrap()
+        .try_extract::<f64>()?;
+    let weighting_freq = (weighting_size / month_total) * -1.0;
+
+    // compute weights lazyframe column
+    let weights_lf = if stringency == "strict" || stringency == "extreme" {
+        all_sizes.with_column(
+            (col(cluster_sizes) * lit(weighting_freq.ln())) / lit(month_total).alias("Weights"),
+        )
+    } else {
+        all_sizes.with_column((lit(1) - col(cluster_sizes)) / lit(month_total).alias("Weights"))
+    };
+
+    // double check that we now have as many weights as we need
+    assert!(
+        weights_lf.clone().collect()?.shape().0 == dist_df.clone().collect()?.shape().0,
+        "ALPINE was not able to find the same number of clusters as are represented in the centroid distance matrix"
+    );
+
+    Ok(weights_lf)
+}
 
 pub fn compute_distance_matrix() -> io::Result<()> {
     println!("API for computing a pairwise distance matrix using one of a few kinds of edit distances coming soon!");
