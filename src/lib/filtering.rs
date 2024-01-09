@@ -1,5 +1,6 @@
 use bio::io::fasta::{Reader, Writer};
 use chrono::NaiveDate;
+use derive_new::new;
 use polars::prelude::*;
 use polars_io::ipc::IpcReader;
 use std::collections::HashMap;
@@ -33,9 +34,36 @@ pub fn replace_gaps(input_path: &String) -> io::Result<()> {
     Ok(())
 }
 
-pub fn filter_by_n(input_path: &String, ambiguity: &f32) -> io::Result<()> {
+#[derive(new)]
+struct RefPriors {
+    total_length: i32,
+    max_n_count: f32,
+}
+
+fn determine_max_n(reference: &str, ambiguity: &f32) -> Result<RefPriors, std::io::Error> {
+    let ref_handle = File::open(reference)?;
+    let reader = Reader::new(ref_handle);
+
+    let mut ref_length = 0;
+
+    for record in reader.records() {
+        ref_length += record.unwrap().seq().len() as i32;
+    }
+
+    let max_n_count = (ambiguity * ref_length as f32).floor();
+
+    Ok(RefPriors::new(ref_length, max_n_count))
+}
+
+pub fn filter_by_n(input_path: &str, ambiguity: &f32, reference: &str) -> io::Result<()> {
     let input_handle = File::open(input_path)?;
     let fasta_reader = Reader::new(input_handle);
+
+    // determine the maximum number of masked bases given the provided reference
+    let ref_priors = match determine_max_n(reference, ambiguity) {
+        Ok(value) => value,
+        Err(message) => return Err(message),
+    };
 
     let path_out: &Path = Path::new("filtered-by-n.fasta");
     let output_handle = File::create(path_out)?;
@@ -47,15 +75,19 @@ pub fn filter_by_n(input_path: &String, ambiguity: &f32) -> io::Result<()> {
         let sequence_length = sequence.len();
         let id = record.id();
 
+        // compute necessary information given the reference
+        let length_diff = ref_priors.total_length - (sequence_length as i32);
+        let incompleteness = if length_diff < 0 { 0 } else { length_diff };
+
         // Count the number of "N" characters in the sequence
-        let count_n = sequence.iter().filter(|&&c| c as char == 'N').count() as f32;
+        let count_n =
+            (sequence.iter().filter(|&&c| c as char == 'N').count() as i32 + incompleteness) as f32;
 
         // write to output FASTA if N-count is less than the desired amount
-        let tolerance = (sequence_length as f32) * ambiguity;
-        if count_n >= tolerance {
+        if count_n <= ref_priors.max_n_count {
             println!(
                 "Record {} had more than {} masked bases and is thus removed.",
-                id, tolerance
+                id, ref_priors.max_n_count
             )
         } else {
             fasta_writer

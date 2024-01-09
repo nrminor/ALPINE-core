@@ -59,6 +59,9 @@ enum Commands {
 
         #[arg(short, long, required = true)]
         ambiguity: f32,
+
+        #[arg(short, long, required = true)]
+        reference: String,
     },
 
     #[clap(
@@ -107,8 +110,12 @@ async fn run() -> Result<()> {
             filtering::replace_gaps(fasta)?;
             Ok(())
         }
-        Some(Commands::FilterByNs { fasta, ambiguity }) => {
-            filtering::filter_by_n(fasta, ambiguity)?;
+        Some(Commands::FilterByNs {
+            fasta,
+            ambiguity,
+            reference,
+        }) => {
+            filtering::filter_by_n(fasta, ambiguity, reference)?;
             Ok(())
         }
         Some(Commands::SeparateByMonth { fasta, metadata }) => {
