@@ -53,7 +53,7 @@ enum Commands {
     #[clap(
         about = "Filter out FASTA records with more than the desired number of masked 'N' bases."
     )]
-    FilterByNs {
+    FilterByN {
         #[arg(short, long, required = true)]
         fasta: String,
 
@@ -110,7 +110,7 @@ async fn run() -> Result<()> {
             filtering::replace_gaps(fasta)?;
             Ok(())
         }
-        Some(Commands::FilterByNs {
+        Some(Commands::FilterByN {
             fasta,
             ambiguity,
             reference,
