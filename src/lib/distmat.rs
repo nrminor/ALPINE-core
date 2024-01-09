@@ -1,8 +1,10 @@
 use anyhow::Result;
+use bio::io::fasta::Reader;
 use clap::ValueEnum;
 use displaydoc::Display;
+use distmat::SquareMatrix;
 use polars::{lazy::dsl::col, prelude::*};
-use std::io;
+use std::fs::File;
 use textdistance::{
     nstr::{lcsseq, lcsstr},
     str::{damerau_levenshtein, jaro_winkler, levenshtein, ratcliff_obershelp, smith_waterman},
@@ -67,9 +69,9 @@ impl DistanceCalculator for DistanceMethods {
     }
 }
 
-fn _weight_by_cluster_size(
+fn weight_by_cluster_size(
     seq_name: &str,
-    stringency: &str,
+    stringency: &Stringency,
     dist_df: &LazyFrame,
     cluster_table: &LazyFrame,
 ) -> Result<LazyFrame> {
@@ -117,13 +119,14 @@ fn _weight_by_cluster_size(
     let weighting_freq = weighting_size / month_total;
 
     // compute weights lazyframe column
-    let weights_lf = if stringency == "strict" || stringency == "extreme" {
-        all_sizes.with_column(
+    let weights_lf = match *stringency {
+        Stringency::Strict | Stringency::Extreme => all_sizes.with_column(
             (col(cluster_sizes) * lit(weighting_freq.ln() * -1.0))
                 / lit(month_total).alias("Weights"),
-        )
-    } else {
-        all_sizes.with_column((lit(1) - col(cluster_sizes)) / lit(month_total).alias("Weights"))
+        ),
+        _ => {
+            all_sizes.with_column((lit(1) - col(cluster_sizes)) / lit(month_total).alias("Weights"))
+        }
     };
 
     // double check that we now have as many weights as we need
@@ -136,13 +139,72 @@ fn _weight_by_cluster_size(
 }
 
 pub fn compute_distance_matrix(
-    _fasta: &str,
-    _cluster_table: &str,
-    _yearmonth: &str,
-    _stringency: &Stringency,
-    _distance_method: &DistanceMethods,
-) -> io::Result<()> {
+    fasta: &str,
+    cluster_table: &str,
+    yearmonth: &str,
+    stringency: &Stringency,
+    distance_method: &DistanceMethods,
+) -> Result<()> {
     println!("API for computing a pairwise distance matrix using one of a few kinds of edit distances coming soon!");
-    // DistMatrix::from_pw_distances_with(&fasta_seq_vec, |seq1, seq2| distance_method.calculate_distance(seq1, seq2));
+
+    // buffer the incoming fasta file
+    let in_fasta = File::open(fasta)?;
+    let fa_reader = Reader::new(in_fasta);
+
+    // collect the FASTA IDs and sequences
+    let (ids, sequences): (Vec<_>, Vec<_>) = fa_reader
+        .records()
+        .map(|result| {
+            let record = result.expect("Error during fasta record parsing.");
+            let sequence_string =
+                String::from_utf8(record.seq().to_vec()).expect("Found invalid UTF-8 in sequence");
+            (record.id().to_owned(), sequence_string)
+        })
+        .unzip();
+
+    // call a distance matrix with the chosen distance metric (defaulting to Levenshtein)
+    let mut pw_distmat = SquareMatrix::from_pw_distances_with(&sequences, |seq1, seq2| {
+        distance_method.calculate_distance(seq1, seq2)
+    });
+    pw_distmat.set_labels(ids.clone());
+
+    // pull distmat information out of the SquareMatrix struct and convert to dataframe
+    let mut dist_col_vev: Vec<Series> = Vec::with_capacity(pw_distmat.size());
+    for (i, (column, label)) in pw_distmat
+        .iter_cols()
+        .zip(pw_distmat.iter_labels())
+        .enumerate()
+    {
+        let series = Series::new(label, column.collect::<Vec<f64>>());
+        dist_col_vev[i] = series
+    }
+    let mut dist_lf = DataFrame::new(dist_col_vev)?.lazy();
+
+    // read the cluster table into a lazyframe to query for cluster-size-based distance weights
+    let cluster_df = CsvReader::from_path(cluster_table)?
+        .has_header(false)
+        .finish()?
+        .lazy();
+
+    // multiply weights onto each column based on the sequence it represents
+    for id in ids {
+        let weights_lf = weight_by_cluster_size(&id, stringency, &dist_lf, &cluster_df)?;
+        dist_lf = dist_lf.join(
+            weights_lf,
+            [col(&id)],
+            [col(&id)],
+            JoinArgs::new(JoinType::Cross),
+        );
+    }
+    let mut final_df = dist_lf.collect()?;
+
+    // write out the weighted distance matrix
+    let out_name = format!("{}-distmat.csv", yearmonth);
+    let out_handle = File::create(out_name).unwrap();
+    CsvWriter::new(out_handle)
+        .has_header(true)
+        .finish(&mut final_df)
+        .unwrap();
+
     Ok(())
 }
