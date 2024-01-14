@@ -1,8 +1,8 @@
 use anyhow::Result;
-use bio::io::fasta::Reader;
 use clap::ValueEnum;
 use displaydoc::Display;
 use distmat::SquareMatrix;
+use noodles::{bgzf, fasta};
 use polars::{lazy::dsl::col, prelude::*};
 use std::fs::File;
 use textdistance::{
@@ -148,17 +148,18 @@ pub fn compute_distance_matrix(
     println!("API for computing a pairwise distance matrix using one of a few kinds of edit distances coming soon!");
 
     // buffer the incoming fasta file
-    let in_fasta = File::open(fasta)?;
-    let fa_reader = Reader::new(in_fasta);
+    let mut fa_reader = File::open(fasta)
+        .map(bgzf::Reader::new)
+        .map(fasta::Reader::new)?;
 
     // collect the FASTA IDs and sequences
     let (ids, sequences): (Vec<_>, Vec<_>) = fa_reader
         .records()
         .map(|result| {
             let record = result.expect("Error during fasta record parsing.");
-            let sequence_string =
-                String::from_utf8(record.seq().to_vec()).expect("Found invalid UTF-8 in sequence");
-            (record.id().to_owned(), sequence_string)
+            let sequence_string = String::from_utf8(record.sequence().get(..).unwrap().to_vec())
+                .expect("Found invalid UTF-8 in sequence");
+            (record.name().to_owned(), sequence_string)
         })
         .unzip();
 
