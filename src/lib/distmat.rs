@@ -153,7 +153,7 @@ pub fn compute_distance_matrix(
         .map(fasta::Reader::new)?;
 
     // collect the FASTA IDs and sequences
-    let (ids, sequences): (Vec<_>, Vec<_>) = fa_reader
+    let (ids, sequences): (Vec<String>, Vec<String>) = fa_reader
         .records()
         .map(|result| {
             let record = result.expect("Error during fasta record parsing.");

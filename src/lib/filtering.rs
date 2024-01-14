@@ -1,11 +1,12 @@
-use bio::io::fasta::{Reader, Writer};
+use bio::io::fasta::Reader;
 use chrono::NaiveDate;
 use derive_new::new;
+use noodles::{bgzf, fasta};
 use polars::prelude::*;
 use polars_io::ipc::IpcReader;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::path::Path;
 
 pub fn replace_gaps(input_path: &String) -> io::Result<()> {
@@ -56,8 +57,9 @@ fn determine_max_n(reference: &str, ambiguity: &f32) -> Result<RefPriors, std::i
 }
 
 pub fn filter_by_n(input_path: &str, ambiguity: &f32, reference: &str) -> io::Result<()> {
-    let input_handle = File::open(input_path)?;
-    let fasta_reader = Reader::new(input_handle);
+    let mut fasta_reader = File::open(input_path)
+        .map(bgzf::Reader::new)
+        .map(fasta::Reader::new)?;
 
     // determine the maximum number of masked bases given the provided reference
     let ref_priors = match determine_max_n(reference, ambiguity) {
@@ -67,21 +69,26 @@ pub fn filter_by_n(input_path: &str, ambiguity: &f32, reference: &str) -> io::Re
 
     let path_out: &Path = Path::new("filtered-by-n.fasta");
     let output_handle = File::create(path_out)?;
-    let mut fasta_writer = Writer::new(output_handle);
+    let mut fasta_writer: fasta::Writer<File> = fasta::Writer::new(output_handle);
 
     for record in fasta_reader.records() {
         let record = record.expect("Error reading record");
-        let sequence = record.seq();
+        let sequence = record.sequence();
         let sequence_length = sequence.len();
-        let id = record.id();
+        let id = record.name();
 
         // compute necessary information given the reference
         let length_diff = ref_priors.total_length - (sequence_length as i32);
         let incompleteness = if length_diff < 0 { 0 } else { length_diff };
 
         // Count the number of "N" characters in the sequence
-        let count_n =
-            (sequence.iter().filter(|&&c| c as char == 'N').count() as i32 + incompleteness) as f32;
+        let count_n = (sequence
+            .get(..)
+            .unwrap()
+            .iter()
+            .filter(|&&c| c as char == 'N')
+            .count() as i32
+            + incompleteness) as f32;
 
         // write to output FASTA if N-count is less than the desired amount
         if count_n <= ref_priors.max_n_count {
@@ -91,7 +98,7 @@ pub fn filter_by_n(input_path: &str, ambiguity: &f32, reference: &str) -> io::Re
             )
         } else {
             fasta_writer
-                .write(id, record.desc(), sequence)
+                .write_record(&record)
                 .expect("Error writing record");
         }
     }
@@ -150,26 +157,29 @@ pub fn separate_by_month(
     input_fasta: &str,
     accession_to_date: HashMap<String, String>,
 ) -> io::Result<()> {
-    let reader = Reader::new(BufReader::new(File::open(input_fasta)?));
-    let mut open_writers: HashMap<String, Writer<BufWriter<File>>> = HashMap::new();
+    let mut fasta_reader = File::open(input_fasta)
+        .map(bgzf::Reader::new)
+        .map(fasta::Reader::new)?;
 
-    for record in reader.records() {
+    let mut open_writers: HashMap<String, fasta::Writer<File>> = HashMap::new();
+
+    for record in fasta_reader.records() {
         let record = record?;
-        let record_date = lookup_date(record.id(), &accession_to_date);
+        let record_date = lookup_date(record.name(), &accession_to_date);
 
         match record_date {
             Some(date) => {
                 let year_month = date.format("%Y-%m").to_string();
                 let writer = open_writers.entry(year_month.clone()).or_insert_with(|| {
                     let file = File::create(format!("{}.fasta", year_month)).unwrap();
-                    Writer::new(BufWriter::new(file))
+                    fasta::Writer::new(file)
                 });
 
                 writer.write_record(&record)?;
             }
             None => println!(
                 "Skipping record with missing or unparseable date: {}",
-                record.id()
+                record.name()
             ),
         }
     }
