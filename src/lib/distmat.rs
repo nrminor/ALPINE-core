@@ -145,7 +145,7 @@ pub fn compute_distance_matrix(
     stringency: &Stringency,
     distance_method: &DistanceMethods,
 ) -> Result<()> {
-    println!("API for computing a pairwise distance matrix using one of a few kinds of edit distances coming soon!");
+    eprintln!("API for computing a pairwise distance matrix using one of a few kinds of edit distances coming soon!");
 
     // buffer the incoming fasta file
     let mut fa_reader = File::open(fasta)

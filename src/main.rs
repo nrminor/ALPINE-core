@@ -46,8 +46,11 @@ struct Cli {
 enum Commands {
     #[clap(about = "Replace FASTA gap symbols '-' with masked bases 'N'.")]
     ReplaceGaps {
-        #[arg(short, long, required = true)]
-        fasta: String,
+        #[arg(short, long, required = false)]
+        fasta: Option<String>,
+
+        #[arg(short, long, required = false)]
+        output_file: Option<String>,
     },
 
     #[clap(
@@ -62,14 +65,17 @@ enum Commands {
 
         #[arg(short, long, required = true)]
         reference: String,
+
+        #[arg(short, long, required = false)]
+        out_file: Option<String>,
     },
 
     #[clap(
         about = "Use collection dates from FASTA record metadata to sort all FASTA records into a separate FASTA for each year-month combination."
     )]
     SeparateByMonth {
-        #[arg(short, long, required = true)]
-        fasta: String,
+        #[arg(short, long, required = false)]
+        fasta: Option<String>,
 
         #[arg(short, long, required = true)]
         metadata: String,
@@ -106,21 +112,22 @@ pub fn print_errors(response: Result<()>) {
 async fn run() -> Result<()> {
     let cli = Cli::parse();
     match &cli.command {
-        Some(Commands::ReplaceGaps { fasta }) => {
-            filtering::replace_gaps(fasta)?;
+        Some(Commands::ReplaceGaps { fasta, output_file }) => {
+            filtering::replace_gaps(fasta.as_deref(), output_file.as_deref())?;
             Ok(())
         }
         Some(Commands::FilterByN {
             fasta,
             ambiguity,
             reference,
+            out_file,
         }) => {
-            filtering::filter_by_n(fasta, ambiguity, reference)?;
+            filtering::filter_by_n(fasta, ambiguity, reference, out_file.as_deref())?;
             Ok(())
         }
         Some(Commands::SeparateByMonth { fasta, metadata }) => {
             let accession_to_date = filtering::date_accessions(metadata)?;
-            filtering::separate_by_month(fasta, accession_to_date)?;
+            filtering::separate_by_month(fasta.as_deref(), accession_to_date)?;
             Ok(())
         }
         Some(Commands::DistanceMatrix {
@@ -140,7 +147,7 @@ async fn run() -> Result<()> {
             Ok(())
         }
         None => {
-            println!("{}\n", INFO);
+            eprintln!("{}\n", INFO);
             std::process::exit(1);
         }
     }

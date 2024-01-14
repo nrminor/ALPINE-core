@@ -1,4 +1,3 @@
-use bio::io::fasta::Reader;
 use chrono::NaiveDate;
 use derive_new::new;
 use noodles::{bgzf, fasta};
@@ -6,30 +5,32 @@ use polars::prelude::*;
 use polars_io::ipc::IpcReader;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Write};
-use std::path::Path;
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 
-pub fn replace_gaps(input_path: &String) -> io::Result<()> {
-    // define the input path
-    let path: &Path = Path::new(input_path);
+pub fn replace_gaps(input_path: Option<&str>, output_file: Option<&str>) -> io::Result<()> {
+    // handle file or stdin opening and buffering
+    let opened_input: Box<dyn Read> = match input_path {
+        Some(input_handle) => Box::new(File::open(input_handle)?),
+        None => Box::new(io::stdin()),
+    };
+    let read_buffer = BufReader::new(opened_input);
 
-    // define the output file
-    let path_out: &Path = Path::new("no-gaps.fasta");
-
-    let file: File = File::open(path)?;
-    let reader: BufReader<File> = BufReader::new(file);
-
-    let mut output_file = File::create(path_out)?;
+    // handle output file or stdout opening and buffering
+    let ready_output: Box<dyn Write> = match output_file {
+        Some(output_handle) => Box::new(File::create(output_handle)?),
+        None => Box::new(io::stdout()),
+    };
+    let mut write_buffer = BufWriter::new(ready_output);
 
     // iterate through the FASTA records from the reader,
     // replace any "-" symbols with "N" characters, and
     // send them to the writer
-    for line in reader.lines() {
+    for line in read_buffer.lines() {
         let mut line = line?;
         if !line.starts_with('>') {
             line = line.replace('-', "N");
         }
-        writeln!(output_file, "{}", line)?;
+        writeln!(write_buffer, "{}", line)?;
     }
 
     Ok(())
@@ -41,14 +42,15 @@ struct RefPriors {
     max_n_count: f32,
 }
 
-fn determine_max_n(reference: &str, ambiguity: &f32) -> Result<RefPriors, std::io::Error> {
-    let ref_handle = File::open(reference)?;
-    let reader = Reader::new(ref_handle);
-
+fn determine_max_n(reference: &str, ambiguity: &f32) -> io::Result<RefPriors> {
+    let mut reader = File::open(reference)
+        .map(BufReader::new)
+        .map(fasta::Reader::new)?;
     let mut ref_length = 0;
 
-    for record in reader.records() {
-        ref_length += record.unwrap().seq().len() as i32;
+    for result in reader.records() {
+        let record = result.unwrap();
+        ref_length += record.sequence().len() as i32;
     }
 
     let max_n_count = (ambiguity * ref_length as f32).floor();
@@ -56,7 +58,12 @@ fn determine_max_n(reference: &str, ambiguity: &f32) -> Result<RefPriors, std::i
     Ok(RefPriors::new(ref_length, max_n_count))
 }
 
-pub fn filter_by_n(input_path: &str, ambiguity: &f32, reference: &str) -> io::Result<()> {
+pub fn filter_by_n(
+    input_path: &str,
+    ambiguity: &f32,
+    reference: &str,
+    out_name: Option<&str>,
+) -> io::Result<()> {
     let mut fasta_reader = File::open(input_path)
         .map(bgzf::Reader::new)
         .map(fasta::Reader::new)?;
@@ -67,9 +74,11 @@ pub fn filter_by_n(input_path: &str, ambiguity: &f32, reference: &str) -> io::Re
         Err(message) => return Err(message),
     };
 
-    let path_out: &Path = Path::new("filtered-by-n.fasta");
-    let output_handle = File::create(path_out)?;
-    let mut fasta_writer: fasta::Writer<File> = fasta::Writer::new(output_handle);
+    let output_handle: Box<dyn Write> = match out_name {
+        Some(output_handle) => Box::new(File::create(output_handle)?),
+        None => Box::new(io::stdout()),
+    };
+    let mut fasta_writer = fasta::Writer::new(output_handle);
 
     for record in fasta_reader.records() {
         let record = record.expect("Error reading record");
@@ -86,15 +95,15 @@ pub fn filter_by_n(input_path: &str, ambiguity: &f32, reference: &str) -> io::Re
             .get(..)
             .unwrap()
             .iter()
-            .filter(|&&c| c as char == 'N')
+            .filter(|&&c| c as char == 'N' || c as char == '-')
             .count() as i32
             + incompleteness) as f32;
 
         // write to output FASTA if N-count is less than the desired amount
-        if count_n <= ref_priors.max_n_count {
-            println!(
-                "Record {} had more than {} masked bases and is thus removed.",
-                id, ref_priors.max_n_count
+        if count_n >= ref_priors.max_n_count {
+            eprintln!(
+                "Record {} had {} masked bases, which is more than the maximum of {} allowed masked bases, and is thus removed.",
+                id, count_n, ref_priors.max_n_count
             )
         } else {
             fasta_writer
@@ -109,7 +118,15 @@ pub fn filter_by_n(input_path: &str, ambiguity: &f32, reference: &str) -> io::Re
 pub fn date_accessions(input_path: &str) -> Result<HashMap<String, String>, PolarsError> {
     // Read the Arrow file into a DataFrame
     let file = File::open(input_path).expect("Cannot open file");
-    let df = IpcReader::new(file).finish()?;
+    let df: DataFrame = if input_path.ends_with(".arrow") {
+        IpcReader::new(file).finish()?
+    } else if input_path.ends_with(".tsv") {
+        CsvReader::new(file).with_delimiter(b'\t').finish()?
+    } else if input_path.ends_with(".csv") {
+        CsvReader::new(file).finish()?
+    } else {
+        panic!("Unknown metadata file type provided.")
+    };
 
     // Make sure the required columns exist
     if !df.schema().contains("Accession") || !df.schema().contains("Isolate Collection date") {
@@ -154,16 +171,19 @@ fn lookup_date(record_name: &str, lookup: &HashMap<String, String>) -> Option<Na
 }
 
 pub fn separate_by_month(
-    input_fasta: &str,
+    input_fasta: Option<&str>,
     accession_to_date: HashMap<String, String>,
 ) -> io::Result<()> {
-    let mut fasta_reader = File::open(input_fasta)
-        .map(bgzf::Reader::new)
-        .map(fasta::Reader::new)?;
+    let provided_input: Box<dyn Read> = match input_fasta {
+        Some(input_handle) => Box::new(File::open(input_handle)?),
+        None => Box::new(io::stdin()),
+    };
+    let buffer = BufReader::new(provided_input);
+    let mut fasta_parser = fasta::Reader::new(buffer);
 
     let mut open_writers: HashMap<String, fasta::Writer<File>> = HashMap::new();
 
-    for record in fasta_reader.records() {
+    for record in fasta_parser.records() {
         let record = record?;
         let record_date = lookup_date(record.name(), &accession_to_date);
 
@@ -177,7 +197,7 @@ pub fn separate_by_month(
 
                 writer.write_record(&record)?;
             }
-            None => println!(
+            None => eprintln!(
                 "Skipping record with missing or unparseable date: {}",
                 record.name()
             ),
