@@ -46,9 +46,11 @@ struct Cli {
 enum Commands {
     #[clap(about = "Replace FASTA gap symbols '-' with masked bases 'N'.")]
     ReplaceGaps {
+        /// FASTA format file of sequences. Reads from stdin if no path is provided.
         #[arg(short, long, required = false)]
         fasta: Option<String>,
 
+        /// Output file path. Writes to stdout if no path is provided.
         #[arg(short, long, required = false)]
         output_file: Option<String>,
     },
@@ -57,15 +59,19 @@ enum Commands {
         about = "Filter out FASTA records with more than the desired number of masked 'N' bases."
     )]
     FilterByN {
+        /// FASTA format file of sequences
         #[arg(short, long, required = true)]
         fasta: String,
 
+        // Maximum number of ambiguous masked bases ("N") to tolerate in each FASTA record.
         #[arg(short, long, required = true)]
         ambiguity: f32,
 
+        /// Reference sequence in FASTA format for the taxon of interest.
         #[arg(short, long, required = true)]
         reference: String,
 
+        /// Output file path. Writes to stdout if no path is provided.
         #[arg(short, long, required = false)]
         out_file: Option<String>,
     },
@@ -74,9 +80,11 @@ enum Commands {
         about = "Use collection dates from FASTA record metadata to sort all FASTA records into a separate FASTA for each year-month combination."
     )]
     SeparateByMonth {
+        /// FASTA format file of sequences. Reads from stdin if no path is provided.
         #[arg(short, long, required = false)]
         fasta: Option<String>,
 
+        /// Output file path. Writes to stdout if no path is provided.
         #[arg(short, long, required = true)]
         metadata: String,
     },
@@ -85,18 +93,23 @@ enum Commands {
         about = "Compute a symmetric pairwise distance matrix based on how dissimilar sequences in the provided FASTA are to one another."
     )]
     DistanceMatrix {
+        /// FASTA format file of sequences
         #[arg(short, long, required = true)]
         fasta: String,
 
+        /// Tab-delimited table of cluster metadata provided by `VSEARCH` clustering algorithms.
         #[arg(short, long, required = true)]
         cluster_table: String,
 
+        /// Label for the output distance matrix. The ALPINE pipeline uses a chronological "year-date" here.
         #[arg(short, long, required = true)]
         yearmonth: String,
 
+        /// How strictly to differentiate high- from low-distance clusters.
         #[arg(short, long, required = true)]
         stringency: Stringency,
 
+        /// Choice of distance-calling methods.
         #[arg(short, long, default_value_t = DistanceMethods::Levenshtein)]
         distance_method: DistanceMethods,
     },
