@@ -5,6 +5,7 @@ use distmat::SquareMatrix;
 use noodles::{bgzf, fasta};
 use polars::{lazy::dsl::col, prelude::*};
 use std::fs::File;
+use std::io::BufReader;
 use textdistance::{
     nstr::{lcsseq, lcsstr},
     str::{damerau_levenshtein, jaro_winkler, levenshtein, ratcliff_obershelp, smith_waterman},
@@ -145,23 +146,35 @@ pub fn compute_distance_matrix(
     stringency: &Stringency,
     distance_method: &DistanceMethods,
 ) -> Result<()> {
-    eprintln!("API for computing a pairwise distance matrix using one of a few kinds of edit distances coming soon!");
-
-    // buffer the incoming fasta file
-    let mut fa_reader = File::open(fasta)
-        .map(bgzf::Reader::new)
-        .map(fasta::Reader::new)?;
-
-    // collect the FASTA IDs and sequences
-    let (ids, sequences): (Vec<String>, Vec<String>) = fa_reader
-        .records()
-        .map(|result| {
-            let record = result.expect("Error during fasta record parsing.");
-            let sequence_string = String::from_utf8(record.sequence().get(..).unwrap().to_vec())
-                .expect("Found invalid UTF-8 in sequence");
-            (record.name().to_owned(), sequence_string)
-        })
-        .unzip();
+    // pull out record IDs and sequences into their own string vectors, while
+    // handling potential bgzip compression
+    let (ids, sequences): (Vec<String>, Vec<String>) = if fasta.ends_with(".gz") {
+        File::open(fasta)
+            .map(bgzf::Reader::new)
+            .map(fasta::Reader::new)?
+            .records()
+            .map(|result| {
+                let record = result.expect("Error during fasta record parsing.");
+                let sequence_string =
+                    String::from_utf8(record.sequence().get(..).unwrap().to_vec())
+                        .expect("Found invalid UTF-8 in sequence");
+                (record.name().to_owned(), sequence_string)
+            })
+            .unzip()
+    } else {
+        File::open(fasta)
+            .map(BufReader::new)
+            .map(fasta::Reader::new)?
+            .records()
+            .map(|result| {
+                let record = result.expect("Error during fasta record parsing.");
+                let sequence_string =
+                    String::from_utf8(record.sequence().get(..).unwrap().to_vec())
+                        .expect("Found invalid UTF-8 in sequence");
+                (record.name().to_owned(), sequence_string)
+            })
+            .unzip()
+    };
 
     // call a distance matrix with the chosen distance metric (defaulting to Levenshtein)
     let mut pw_distmat = SquareMatrix::from_pw_distances_with(&sequences, |seq1, seq2| {
