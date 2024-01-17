@@ -1,18 +1,21 @@
+use anyhow::anyhow;
 use anyhow::Result;
 use clap::ValueEnum;
-use displaydoc::Display;
+use derive_new::new;
 use distmat::SquareMatrix;
 use noodles::{bgzf, fasta};
 use polars::{lazy::dsl::col, prelude::*};
+use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
+use std::io::ErrorKind;
 use textdistance::{
     nstr::{lcsseq, lcsstr},
     str::{damerau_levenshtein, jaro_winkler, levenshtein, ratcliff_obershelp, smith_waterman},
     str::{hamming, jaccard},
 };
 
-#[derive(ValueEnum, Debug, Clone, PartialEq, Display)]
+#[derive(ValueEnum, Debug, Clone, PartialEq)]
 pub enum DistanceMethods {
     /// Hamming edit distance
     Hamming,
@@ -40,6 +43,26 @@ pub enum DistanceMethods {
 
     /// Jaccard token/kmer-based distance
     Jaccard,
+}
+
+impl fmt::Display for DistanceMethods {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                DistanceMethods::Hamming => "hamming",
+                DistanceMethods::Levenshtein => "levenshtein",
+                DistanceMethods::DamerauLevenshtein => "damerau-levenshtein",
+                DistanceMethods::JaroWinkler => "jaro-winkler",
+                DistanceMethods::SmithWaterman => "smith-waterman",
+                DistanceMethods::RatcliffObershelp => "ratcliff-obershelp",
+                DistanceMethods::LCSSeq => "lcs-seq",
+                DistanceMethods::LCSStr => "lcs-str",
+                DistanceMethods::Jaccard => "jaccard",
+            }
+        )
+    }
 }
 
 #[derive(ValueEnum, Debug, Clone, PartialEq)]
@@ -70,34 +93,105 @@ impl DistanceCalculator for DistanceMethods {
     }
 }
 
+/// Cluster data stores information from each VSEARCH table that is relevant for calling distances
+#[derive(new)]
+struct ClusterData {
+    member_types: String,
+    seq_names: String,
+    cluster_sizes: String,
+}
+
+fn get_cluster_data(cluster_table: &LazyFrame) -> Result<ClusterData> {
+    // separate out the columns of information we need
+    let cluster_query = cluster_table.clone().collect()?;
+    let col_names = cluster_query.get_column_names();
+
+    let member_types = match col_names.first() {
+        Some(member_type) => member_type.to_string(),
+        None => {
+            eprintln!(
+                "Please double check that the column of VSEARCH cluster types is the first column."
+            );
+            return Err(anyhow!(
+                "Member types could not be parsed from provided cluster table,"
+            ));
+        }
+    };
+
+    let seq_names = match col_names.get(8) {
+        Some(seq_names) => seq_names.to_string(),
+        None => {
+            eprintln!("Please double check that the column of sequence names is the ninth column.");
+            return Err(anyhow!(
+                "Sequence names could not be parsed from provided cluster table,"
+            ));
+        }
+    };
+
+    let cluster_sizes = match col_names.get(2) {
+        Some(cluster_sizes) => cluster_sizes.to_string(),
+        None => {
+            eprintln!(
+                "Please double check that the column of VSEARCH cluster sizes is the third column."
+            );
+            return Err(anyhow!(
+                "Cluster sizes could not be parsed from provided cluster table,"
+            ));
+        }
+    };
+
+    Ok(ClusterData::new(member_types, seq_names, cluster_sizes))
+}
+
+fn compute_weight(
+    centroid_lf: LazyFrame,
+    seq_names: &str,
+    seq_name: &str,
+    cluster_sizes: &str,
+) -> Result<f64> {
+    let collected_df = centroid_lf
+        .clone()
+        .filter(col(seq_names).eq(lit(seq_name)))
+        .select([col(cluster_sizes)])
+        .collect()?;
+
+    let attempt = match collected_df
+        .column(cluster_sizes)?
+        .iter()
+        .next() {
+            Some(value) => value,
+            None => return Err(anyhow!("Could not parse centroid data to compute a weight. Please double check the input cluster table."))
+        };
+
+    Ok(attempt.try_extract::<f64>()?)
+}
+
 fn weight_by_cluster_size(
     seq_name: &str,
     stringency: &Stringency,
     dist_df: &LazyFrame,
     cluster_table: &LazyFrame,
 ) -> Result<LazyFrame> {
-    // separate out the columns of information we need
-    let cluster_query = cluster_table.clone().collect()?;
-    let col_names = &cluster_query.get_column_names();
-    let member_types = col_names.first().unwrap();
-    let seq_names = col_names.get(8).unwrap();
-    let cluster_sizes = col_names.get(2).unwrap();
+    let cluster_data = get_cluster_data(cluster_table)?;
+    let member_types = cluster_data.member_types;
+    let seq_names = cluster_data.seq_names;
+    let cluster_sizes = cluster_data.cluster_sizes;
 
     // Filter down the df so that only rows representing centroids are present
     let centroid_lf = cluster_table
         .clone()
-        .filter(col(member_types).eq(lit("C")))
+        .filter(col(&member_types).eq(lit("C")))
         .sort(seq_name, Default::default());
 
     // extract a frame of cluster sizes that are in the same order as the sequences in the distance matrix
     let all_sizes = centroid_lf
         .clone()
-        .select([col(cluster_sizes), col(seq_names)]);
+        .select([col(&cluster_sizes), col(&seq_names)]);
 
     // Filter down to hits only and use to get a total number of sequences for the current month
     let hits_df = cluster_table
         .clone()
-        .filter(col(member_types).eq(lit("H")))
+        .filter(col(&member_types).eq(lit("H")))
         .sort(seq_name, Default::default())
         .collect()?;
     let month_total = if hits_df.shape().0 == 0 {
@@ -107,27 +201,17 @@ fn weight_by_cluster_size(
     };
 
     // find cluster size for the accession in question
-    let weighting_size = centroid_lf
-        .clone()
-        .filter(col(seq_names).eq(lit(seq_name)))
-        .select([col(cluster_sizes)])
-        .collect()?
-        .column(cluster_sizes)?
-        .iter()
-        .next()
-        .unwrap()
-        .try_extract::<f64>()?;
+    let weighting_size = compute_weight(centroid_lf, &seq_names, seq_name, &cluster_sizes)?;
     let weighting_freq = weighting_size / month_total;
 
     // compute weights lazyframe column
     let weights_lf = match *stringency {
         Stringency::Strict | Stringency::Extreme => all_sizes.with_column(
-            (col(cluster_sizes) * lit(weighting_freq.ln() * -1.0))
+            (col(&cluster_sizes) * lit(weighting_freq.ln() * -1.0))
                 / lit(month_total).alias("Weights"),
         ),
-        _ => {
-            all_sizes.with_column((lit(1) - col(cluster_sizes)) / lit(month_total).alias("Weights"))
-        }
+        _ => all_sizes
+            .with_column((lit(1) - col(&cluster_sizes)) / lit(month_total).alias("Weights")),
     };
 
     // double check that we now have as many weights as we need
@@ -139,6 +223,59 @@ fn weight_by_cluster_size(
     Ok(weights_lf)
 }
 
+fn unpack_sequence(record: &fasta::Record) -> std::io::Result<String> {
+    let seq_attempt =
+        match record.sequence().get(..) {
+            Some(seq) => seq.to_vec(),
+            None => return Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "No sequence was found for the provided record. Double check FASTA completeness.",
+            )),
+        };
+
+    let seq_as_string = String::from_utf8(seq_attempt).unwrap();
+
+    Ok(seq_as_string)
+}
+
+fn collect_fa_data(fasta: &str) -> Result<(Vec<String>, Vec<String>)> {
+    // pull out record IDs and sequences into their own string vectors, while
+    // handling potential bgzip compression
+    // let (ids, sequences): (Vec<String>, Vec<String>)
+    let parsed_fasta: std::io::Result<Vec<(String, String)>> = if fasta.ends_with(".gz") {
+        File::open(fasta)
+            .map(bgzf::Reader::new)
+            .map(fasta::Reader::new)?
+            .records()
+            .map(|result| {
+                result.and_then(|record| {
+                    let id = record.name().to_owned();
+                    unpack_sequence(&record).map(|sequence_string| (id, sequence_string))
+                })
+            })
+            .collect()
+    } else {
+        File::open(fasta)
+            .map(BufReader::new)
+            .map(fasta::Reader::new)?
+            .records()
+            .map(|result| {
+                result.and_then(|record| {
+                    let id = record.name().to_owned();
+                    unpack_sequence(&record).map(|sequence_string| (id, sequence_string))
+                })
+            })
+            .collect()
+    };
+
+    let (ids, sequences) = match parsed_fasta {
+        Ok(pairs) => pairs.into_iter().unzip(),
+        Err(e) => return Err(e.into()),
+    };
+
+    Ok((ids, sequences))
+}
+
 pub fn compute_distance_matrix(
     fasta: &str,
     cluster_table: &str,
@@ -146,35 +283,14 @@ pub fn compute_distance_matrix(
     stringency: &Stringency,
     distance_method: &DistanceMethods,
 ) -> Result<()> {
-    // pull out record IDs and sequences into their own string vectors, while
-    // handling potential bgzip compression
-    let (ids, sequences): (Vec<String>, Vec<String>) = if fasta.ends_with(".gz") {
-        File::open(fasta)
-            .map(bgzf::Reader::new)
-            .map(fasta::Reader::new)?
-            .records()
-            .map(|result| {
-                let record = result.expect("Error during fasta record parsing.");
-                let sequence_string =
-                    String::from_utf8(record.sequence().get(..).unwrap().to_vec())
-                        .expect("Found invalid UTF-8 in sequence");
-                (record.name().to_owned(), sequence_string)
-            })
-            .unzip()
-    } else {
-        File::open(fasta)
-            .map(BufReader::new)
-            .map(fasta::Reader::new)?
-            .records()
-            .map(|result| {
-                let record = result.expect("Error during fasta record parsing.");
-                let sequence_string =
-                    String::from_utf8(record.sequence().get(..).unwrap().to_vec())
-                        .expect("Found invalid UTF-8 in sequence");
-                (record.name().to_owned(), sequence_string)
-            })
-            .unzip()
-    };
+    let (ids, sequences) = collect_fa_data(fasta)?;
+
+    // double check that there are as many ids as there are sequences
+    assert!(
+        ids.len() == sequences.len(),
+        "Unable to identify an ID for each sequence from the FASTA {}.",
+        &fasta
+    );
 
     // call a distance matrix with the chosen distance metric (defaulting to Levenshtein)
     let mut pw_distmat = SquareMatrix::from_pw_distances_with(&sequences, |seq1, seq2| {
@@ -214,11 +330,13 @@ pub fn compute_distance_matrix(
 
     // write out the weighted distance matrix
     let out_name = format!("{}-distmat.csv", yearmonth);
-    let out_handle = File::create(out_name).unwrap();
+    let out_handle = File::create(out_name).expect(
+        "File could not be create to write the distance matrix to. Please check file-write permissions."
+    );
     CsvWriter::new(out_handle)
         .has_header(true)
         .finish(&mut final_df)
-        .unwrap();
+        .expect("Weighted distance matrix could not be written.");
 
     Ok(())
 }
