@@ -84,7 +84,6 @@ pub fn filter_by_n(
         let record = record.expect("Error reading record");
         let sequence = record.sequence();
         let sequence_length = sequence.len();
-        let id = record.name();
 
         // compute necessary information given the reference
         let length_diff = ref_priors.total_length - (sequence_length as i32);
@@ -100,12 +99,7 @@ pub fn filter_by_n(
             + incompleteness) as f32;
 
         // write to output FASTA if N-count is less than the desired amount
-        if count_n >= ref_priors.max_n_count {
-            eprintln!(
-                "Record {} had {} masked bases, which is more than the maximum of {} allowed masked bases, and is thus removed.",
-                id, count_n, ref_priors.max_n_count
-            )
-        } else {
+        if count_n <= ref_priors.max_n_count {
             fasta_writer
                 .write_record(&record)
                 .expect("Error writing record");
