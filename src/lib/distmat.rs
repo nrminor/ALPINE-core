@@ -13,7 +13,7 @@ use std::ops::Mul;
 use textdistance::{
     nstr::{lcsseq, lcsstr},
     str::{damerau_levenshtein, jaro_winkler, levenshtein, ratcliff_obershelp, smith_waterman},
-    str::{hamming, jaccard},
+    str::{entropy_ncd, hamming, jaccard},
 };
 
 #[derive(ValueEnum, Debug, Clone, PartialEq)]
@@ -44,6 +44,9 @@ pub enum DistanceMethods {
 
     /// Jaccard token/kmer-based distance
     Jaccard,
+
+    /// Entropy normalized compression distance
+    EntropyNcd,
 }
 
 impl fmt::Display for DistanceMethods {
@@ -61,6 +64,7 @@ impl fmt::Display for DistanceMethods {
                 DistanceMethods::LCSSeq => "lcs-seq",
                 DistanceMethods::LCSStr => "lcs-str",
                 DistanceMethods::Jaccard => "jaccard",
+                DistanceMethods::EntropyNcd => "entropy",
             }
         )
     }
@@ -105,6 +109,7 @@ impl DistanceCalculator for DistanceMethods {
             DistanceMethods::LCSSeq => lcsseq(s1, s2),
             DistanceMethods::LCSStr => lcsstr(s1, s2),
             DistanceMethods::Jaccard => jaccard(s1, s2),
+            DistanceMethods::EntropyNcd => entropy_ncd(s1, s2),
         }
     }
 }
