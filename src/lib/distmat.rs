@@ -10,6 +10,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::ErrorKind;
 use std::ops::Mul;
+use std::rc::Rc;
 use textdistance::{
     nstr::{lcsseq, lcsstr},
     str::{damerau_levenshtein, jaro_winkler, levenshtein, ratcliff_obershelp, smith_waterman},
@@ -117,10 +118,10 @@ impl DistanceCalculator for DistanceMethods {
 /// Cluster columns contains the column names where the information ALPINE needs is stored
 #[derive(new, Debug, Clone)]
 struct ClusterColumns {
-    type_col: String,
-    index_col: String,
-    id_col: String,
-    size_col: String,
+    type_col: Rc<str>,
+    index_col: Rc<str>,
+    id_col: Rc<str>,
+    size_col: Rc<str>,
 }
 
 fn get_cluster_cols(cluster_table: &LazyFrame) -> Result<ClusterColumns> {
@@ -128,8 +129,8 @@ fn get_cluster_cols(cluster_table: &LazyFrame) -> Result<ClusterColumns> {
     let cluster_query = cluster_table.clone().collect()?;
     let col_names = cluster_query.get_column_names();
 
-    let type_col = match col_names.first() {
-        Some(col_name) => col_name.to_string(),
+    let type_col: Rc<str> = match col_names.first() {
+        Some(col_name) => Rc::from(col_name.to_string()),
         None => {
             eprintln!(
                 "Please double check that the column of VSEARCH cluster types is the first column."
@@ -140,8 +141,8 @@ fn get_cluster_cols(cluster_table: &LazyFrame) -> Result<ClusterColumns> {
         }
     };
 
-    let index_col = match col_names.get(1) {
-        Some(col_name) => col_name.to_string(),
+    let index_col: Rc<str> = match col_names.get(1) {
+        Some(col_name) => Rc::from(col_name.to_string()),
         None => {
             eprintln!(
                 "Please double check that the column of VSEARCH cluster index is the second column."
@@ -152,8 +153,8 @@ fn get_cluster_cols(cluster_table: &LazyFrame) -> Result<ClusterColumns> {
         }
     };
 
-    let name_col = match col_names.get(8) {
-        Some(col_name) => col_name.to_string(),
+    let name_col: Rc<str> = match col_names.get(8) {
+        Some(col_name) => Rc::from(col_name.to_string()),
         None => {
             eprintln!("Please double check that the column of sequence names is the ninth column.");
             return Err(anyhow!(
@@ -162,8 +163,8 @@ fn get_cluster_cols(cluster_table: &LazyFrame) -> Result<ClusterColumns> {
         }
     };
 
-    let size_col = match col_names.get(2) {
-        Some(col_name) => col_name.to_string(),
+    let size_col: Rc<str> = match col_names.get(2) {
+        Some(col_name) => Rc::from(col_name.to_string()),
         None => {
             eprintln!(
                 "Please double check that the column of VSEARCH cluster sizes is the third column."
@@ -181,7 +182,6 @@ fn get_size_per_member(
     cluster_table: &LazyFrame,
     centroids_only: &LazyFrame,
     clust_cols: &ClusterColumns,
-    _seq_name: &str,
 ) -> Result<(f64, DataFrame)> {
     // pull out the sizes for each centroid by index
     let centroid_sizes = centroids_only
@@ -270,7 +270,7 @@ fn weight_by_cluster_size(
 
     // Filter down to hits only and use to get a total number of sequences for the current month
     let (month_total, all_size_df) =
-        get_size_per_member(cluster_table, &centroids_only, &clust_cols, seq_name)?;
+        get_size_per_member(cluster_table, &centroids_only, &clust_cols)?;
 
     // determine the cluster index for the current cluster member
     let index: i64 = get_cluster_index(cluster_table, &clust_cols, seq_name)?;
@@ -327,10 +327,10 @@ fn unpack_sequence(record: &fasta::Record) -> std::io::Result<String> {
     Ok(seq_as_string)
 }
 
-fn collect_fa_data(fasta: &str) -> Result<(Vec<String>, Vec<String>)> {
+fn collect_fa_data(fasta: &str) -> Result<(Vec<String>, Vec<Rc<str>>)> {
     // pull out record IDs and sequences into their own string vectors, while
     // handling potential bgzip compression
-    let parsed_fasta: std::io::Result<Vec<(String, String)>> = if fasta.ends_with(".gz") {
+    let parsed_fasta: std::io::Result<Vec<(String, Rc<str>)>> = if fasta.ends_with(".gz") {
         File::open(fasta)
             .map(bgzf::Reader::new)
             .map(fasta::Reader::new)?
@@ -338,7 +338,7 @@ fn collect_fa_data(fasta: &str) -> Result<(Vec<String>, Vec<String>)> {
             .map(|result| {
                 result.and_then(|record| {
                     let id = record.name().to_owned();
-                    unpack_sequence(&record).map(|sequence_string| (id, sequence_string))
+                    unpack_sequence(&record).map(|sequence_string| (id, Rc::from(sequence_string)))
                 })
             })
             .collect()
@@ -350,7 +350,7 @@ fn collect_fa_data(fasta: &str) -> Result<(Vec<String>, Vec<String>)> {
             .map(|result| {
                 result.and_then(|record| {
                     let id = record.name().to_owned();
-                    unpack_sequence(&record).map(|sequence_string| (id, sequence_string))
+                    unpack_sequence(&record).map(|sequence_string| (id, Rc::from(sequence_string)))
                 })
             })
             .collect()

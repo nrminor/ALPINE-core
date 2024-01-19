@@ -6,6 +6,7 @@ use polars_io::ipc::IpcReader;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
+use std::rc::Rc;
 
 pub fn replace_gaps(input_path: Option<&str>, output_file: Option<&str>) -> io::Result<()> {
     // handle file or stdin opening and buffering
@@ -109,7 +110,7 @@ pub fn filter_by_n(
     Ok(())
 }
 
-pub fn date_accessions(input_path: &str) -> Result<HashMap<String, String>, PolarsError> {
+pub fn date_accessions(input_path: &str) -> Result<HashMap<Rc<str>, Rc<str>>, PolarsError> {
     // Read the Arrow file into a DataFrame
     let file = File::open(input_path).expect("Cannot open file");
     let df: DataFrame = if input_path.ends_with(".arrow") {
@@ -147,14 +148,14 @@ pub fn date_accessions(input_path: &str) -> Result<HashMap<String, String>, Pola
         .zip(date_s.utf8().unwrap().into_iter())
     {
         if let (Some(accession), Some(date)) = (accession, date) {
-            accession_to_date.insert(accession.to_string(), date.to_string());
+            accession_to_date.insert(Rc::from(accession.to_string()), Rc::from(date.to_string()));
         }
     }
 
     Ok(accession_to_date)
 }
 
-fn lookup_date(record_name: &str, lookup: &HashMap<String, String>) -> Option<NaiveDate> {
+fn lookup_date(record_name: &str, lookup: &HashMap<Rc<str>, Rc<str>>) -> Option<NaiveDate> {
     match lookup.get(record_name) {
         Some(date) => match NaiveDate::parse_from_str(date, "%Y-%m-%d") {
             Ok(parsed_date) => Some(parsed_date),
@@ -166,7 +167,7 @@ fn lookup_date(record_name: &str, lookup: &HashMap<String, String>) -> Option<Na
 
 pub fn separate_by_month(
     input_fasta: Option<&str>,
-    accession_to_date: HashMap<String, String>,
+    accession_to_date: HashMap<Rc<str>, Rc<str>>,
 ) -> io::Result<()> {
     let provided_input: Box<dyn Read> = match input_fasta {
         Some(input_handle) => Box::new(File::open(input_handle)?),
