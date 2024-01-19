@@ -184,7 +184,7 @@ fn weight_by_cluster_size(
     seq_name: &str,
     stringency: &Stringency,
     cluster_table: &LazyFrame,
-) -> Result<Series> {
+) -> Result<(String, Series)> {
     let clust_cols = get_cluster_cols(cluster_table)?;
 
     // Filter down the df so that only rows representing centroids are present
@@ -229,24 +229,22 @@ fn weight_by_cluster_size(
     let weighting_freq = weighting_size / month_total;
 
     // compute weights lazyframe column
+    let weights_header = format!("{}_weights", seq_name);
     let weights_lf = match *stringency {
         Stringency::Strict | Stringency::Extreme => hits_df
             .lazy()
             .with_column(
                 ((col(&clust_cols.size_col) * lit(weighting_freq.ln() * -1.0)) / lit(month_total))
-                    .alias(&format!("{}_weights", seq_name)),
+                    .alias(&weights_header),
             )
-            .select(&[col(&format!("{}_weights", seq_name))]),
+            .select(&[col(&weights_header)]),
         _ => hits_df
             .lazy()
             .with_column(((lit(1) - col(&clust_cols.size_col)) / lit(month_total)).alias("Weights"))
-            .select(&[col(&format!("{}_weights", seq_name))]),
+            .select(&[col(&weights_header)]),
     };
 
-    let weights = weights_lf
-        .collect()?
-        .column(&format!("{}_weights", seq_name))?
-        .to_owned();
+    let weights = weights_lf.collect()?.column(&weights_header)?.to_owned();
 
     // double check that we now have as many weights as we need
     assert!(
@@ -254,7 +252,7 @@ fn weight_by_cluster_size(
         "ALPINE was not able to find the same number of clusters as are represented in the centroid distance matrix"
     );
 
-    Ok(weights)
+    Ok((weights_header, weights))
 }
 
 fn unpack_sequence(record: &fasta::Record) -> std::io::Result<String> {
@@ -352,9 +350,7 @@ pub fn compute_distance_matrix(
 
     // multiply weights onto each column based on the sequence it represents
     for id in ids {
-        let weights = weight_by_cluster_size(&id, stringency, &cluster_df)?;
-        eprintln!("Weights prepared for joining:\n{:?}", weights);
-        let weights_header = format!("{}_weights", id);
+        let (weights_header, weights) = weight_by_cluster_size(&id, stringency, &cluster_df)?;
         dist_df = dist_df
             .hstack(&[weights])?
             .lazy()
