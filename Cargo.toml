@@ -2,10 +2,11 @@
 name = "alpine-core"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+readme = "README.md"
 description = "ALPINE (Anachronistic Lineage and Persistent INfection Explorer) Core Utilities"
 repository = "https://github.com/nrminor/ALPINE-core"
 homepage = "https://github.com/nrminor/ALPINE-core"
-readme = "https://github.com/nrminor/ALPINE-core/blob/main/README.md"
 documentation = "https://github.com/nrminor/ALPINE-core/blob/main/README.md"
 keywords = ["science", "reproducibility", "bioinformatics", "data"]
 categories = ["command-line-utilities", "science"]

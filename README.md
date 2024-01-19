@@ -1,5 +1,6 @@
 # ALPINE (Anachronistic Lineage and Persistent INfection Explorer) Core Utilities
-[![Open Source Starter Files](https://github.com/nrminor/ALPINE.rs/actions/workflows/open-source-starter.yml/badge.svg)](https://github.com/nrminor/ALPINE.rs/actions/workflows/open-source-starter.yml) [![Rust CI](https://github.com/nrminor/ALPINE.rs/actions/workflows/rust-ci.yml/badge.svg)](https://github.com/nrminor/ALPINE.rs/actions/workflows/rust-ci.yml)
+[![Open Source Starter Files](https://github.com/nrminor/ALPINE.rs/actions/workflows/open-source-starter.yml/badge.svg)](https://github.com/nrminor/ALPINE.rs/actions/workflows/open-source-starter.yml) [![Rust CI](https://github.com/nrminor/ALPINE.rs/actions/workflows/rust-ci.yml/badge.svg)](https://github.com/nrminor/ALPINE.rs/actions/workflows/rust-ci.yml) ![Crates.io](https://img.shields.io/crates/v/alpine-core) ![Crates.io](https://img.shields.io/crates/d/alpine-core)
+
 
 See [the original ALPINE workflow repo here](https://github.com/nrminor/ALPINE). This repo contains the in-development Rust source code meant to replace the core components of the ALPINE pipeline that were previously written in Julia. This tool has a rich command line interface intended to allow researchers to perform ALPINE-type analyses without invoking the entire Nextflow pipeline and associated Docker containers.
 
