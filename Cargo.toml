@@ -2,8 +2,20 @@
 name = "alpine"
 version = "0.1.0"
 edition = "2021"
+description = "ALPINE (Anachronistic Lineage and Persistent INfection Explorer) Core Utilities"
+repository = "https://github.com/nrminor/ALPINE-core"
+homepage = "https://github.com/nrminor/ALPINE-core"
+documentation = "https://github.com/nrminor/ALPINE-core/blob/main/README.md"
+keywords = ["science", "reproducibility", "bioinformatics", "data"]
+categories = ["command-line-utilities", "science"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "alpine"
+path = "src/lib.rs"
+
+[[bin]]
+name = "alpine"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.75"
