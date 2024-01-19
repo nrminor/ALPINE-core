@@ -43,4 +43,4 @@ Options:
   -h, --help               Print help
 ```
 
-To set up and try out the toolset, either install the Rust toolchain and build it yourself or run `./easy_install` in this directory after cloning it to your machine. Once the ALPINE core utilities are ready for the bigtime, they will be made available via [crates.io](https://crates.io/).
+To set up and try out the toolset, either install the Rust toolchain and build it yourself or run `./easy_install` in this directory after cloning it to your machine.
