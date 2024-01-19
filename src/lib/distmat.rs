@@ -74,6 +74,21 @@ pub enum Stringency {
     Extreme,
 }
 
+impl fmt::Display for Stringency {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Stringency::Lenient => "lenient",
+                Stringency::Intermediate => "intermediate",
+                Stringency::Strict => "strict",
+                Stringency::Extreme => "extreme",
+            }
+        )
+    }
+}
+
 trait DistanceCalculator {
     fn calculate_distance(&self, s1: &str, s2: &str) -> f64;
 }
@@ -157,27 +172,83 @@ fn get_cluster_cols(cluster_table: &LazyFrame) -> Result<ClusterColumns> {
     Ok(ClusterColumns::new(type_col, index_col, name_col, size_col))
 }
 
-fn compute_weight(
+fn get_size_per_member(
+    cluster_table: &LazyFrame,
+    centroids_only: &LazyFrame,
+    clust_cols: &ClusterColumns,
+    _seq_name: &str,
+) -> Result<(f64, DataFrame)> {
+    // pull out the sizes for each centroid by index
+    let centroid_sizes = centroids_only
+        .clone()
+        .select(&[col(&clust_cols.index_col), col(&clust_cols.size_col)])
+        .collect()?;
+
+    // Filter down to hits only and use to get a total number of sequences for the current month
+    let member_count = cluster_table
+        .clone()
+        .filter(
+            col(&clust_cols.type_col)
+                .eq(lit("H"))
+                .or(col(&clust_cols.type_col).eq(lit("S"))),
+        )
+        .select(&[col(&clust_cols.index_col)])
+        .collect()?
+        .shape()
+        .0;
+
+    // count rows of members to get the month total
+    let month_total: f64 = if member_count == 0 {
+        1.0
+    } else {
+        member_count as f64
+    };
+
+    Ok((month_total, centroid_sizes))
+}
+
+fn get_cluster_index(
+    cluster_table: &LazyFrame,
+    clust_cols: &ClusterColumns,
+    seq_name: &str,
+) -> Result<i64> {
+    let filtered = cluster_table
+        .clone()
+        .filter(col(&clust_cols.id_col).eq(lit(seq_name)))
+        .select(&[col(&clust_cols.index_col)])
+        .collect()?;
+
+    let index = filtered
+        .column(&clust_cols.index_col)?
+        .get(0)?
+        .try_extract::<i64>()?;
+
+    Ok(index)
+}
+
+fn compute_weighting_freq(
     centroid_lf: LazyFrame,
     clust_index: i64,
-    index_col: &str,
-    size_col: &str,
+    month_total: f64,
+    clust_cols: &ClusterColumns,
 ) -> Result<f64> {
     let collected_df = centroid_lf
         .clone()
-        .filter(col(index_col).eq(clust_index))
-        .select([col(size_col)])
+        .filter(col(&clust_cols.index_col).eq(clust_index))
+        .select([col(&clust_cols.size_col)])
         .collect()?;
 
     let attempt = match collected_df
-        .column(size_col)?
+        .column(&clust_cols.size_col)?
         .iter()
         .next() {
             Some(value) => value,
             None => return Err(anyhow!("Could not parse centroid data to compute a weight. Please double check the input cluster table."))
         };
 
-    Ok(attempt.try_extract::<f64>()?)
+    let cluster_freq = attempt.try_extract::<f64>()? / month_total;
+
+    Ok(cluster_freq)
 }
 
 fn weight_by_cluster_size(
@@ -188,69 +259,50 @@ fn weight_by_cluster_size(
     let clust_cols = get_cluster_cols(cluster_table)?;
 
     // Filter down the df so that only rows representing centroids are present
-    let centroid_lf = cluster_table
+    let centroids_only = cluster_table
         .clone()
-        .filter(col(&clust_cols.type_col).eq(lit("C")))
-        .sort(&clust_cols.id_col, Default::default());
+        .filter(col(&clust_cols.type_col).eq(lit("C")));
 
     // Filter down to hits only and use to get a total number of sequences for the current month
-    let hits_df = cluster_table
-        .clone()
-        .filter(
-            col(&clust_cols.type_col)
-                .eq(lit("H"))
-                .or(col(&clust_cols.type_col).eq(lit("S"))),
-        )
-        .sort(&clust_cols.id_col, Default::default())
-        .collect()?;
-    let month_total: f64 = if hits_df.shape().0 == 0 {
-        1.0
-    } else {
-        hits_df.shape().0 as f64
-    };
+    let (month_total, all_size_df) =
+        get_size_per_member(cluster_table, &centroids_only, &clust_cols, seq_name)?;
 
     // determine the cluster index for the current cluster member
-    let index: i64 = cluster_table
-        .clone()
-        .filter(col(&clust_cols.id_col).eq(lit(seq_name)))
-        .select(&[col(&clust_cols.index_col)])
-        .collect()?
-        .column(&clust_cols.index_col)?
-        .get(0)?
-        .try_extract::<i64>()?;
+    let index: i64 = get_cluster_index(cluster_table, &clust_cols, seq_name)?;
 
-    // find cluster size for the member accession in question
-    let weighting_size = compute_weight(
-        centroid_lf,
-        index,
-        &clust_cols.index_col,
-        &clust_cols.size_col,
-    )?;
-    let weighting_freq = weighting_size / month_total;
+    // find the frequency of the cluster for the member accession in question
+    let weighting_freq = compute_weighting_freq(centroids_only, index, month_total, &clust_cols)?;
 
-    // compute weights lazyframe column
+    // compute Polars series of weights along with the series name
     let weights_header = format!("{}_weights", seq_name);
     let weights_lf = match *stringency {
-        Stringency::Strict | Stringency::Extreme => hits_df
+        Stringency::Strict | Stringency::Extreme => all_size_df
             .lazy()
+            .with_column(lit(-1.0).alias("negative"))
+            .with_column(lit(weighting_freq.ln()).alias("log_freq"))
+            .with_column(lit(month_total).alias("total"))
             .with_column(
-                ((col(&clust_cols.size_col) * lit(weighting_freq.ln() * -1.0)) / lit(month_total))
-                    .alias(&weights_header),
+                col(&clust_cols.size_col) * ((col("negative") * col("log_freq")) / col("total")),
             )
-            .select(&[col(&weights_header)]),
-        _ => hits_df
+            .rename([&clust_cols.size_col], [&weights_header]),
+        _ => all_size_df
             .lazy()
-            .with_column(((lit(1) - col(&clust_cols.size_col)) / lit(month_total)).alias("Weights"))
-            .select(&[col(&weights_header)]),
+            .with_column(lit(1.0).alias("tmp_int"))
+            .with_column(lit(-1.0).alias("negative"))
+            .with_column(lit(weighting_freq).alias("freq"))
+            .with_column(lit(month_total).alias("total"))
+            .with_column(
+                col(&clust_cols.size_col)
+                    * ((col("tmp_int") + col("negative") * col("freq")) / col("total")),
+            )
+            .rename([&clust_cols.size_col], [&weights_header]),
     };
 
-    let weights = weights_lf.collect()?.column(&weights_header)?.to_owned();
-
-    // double check that we now have as many weights as we need
-    assert!(
-        weights.len() as f64 == month_total,
-        "ALPINE was not able to find the same number of clusters as are represented in the centroid distance matrix"
-    );
+    let weights = weights_lf
+        .select(&[col(&weights_header)])
+        .collect()?
+        .column(&weights_header)?
+        .to_owned();
 
     Ok((weights_header, weights))
 }

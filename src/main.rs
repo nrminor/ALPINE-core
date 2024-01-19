@@ -106,11 +106,11 @@ enum Commands {
         yearmonth: String,
 
         /// How strictly to differentiate high- from low-distance clusters.
-        #[arg(short, long, required = true)]
+        #[arg(short, long, required = false, default_value_t = Stringency::Strict)]
         stringency: Stringency,
 
         /// Choice of distance-calling methods.
-        #[arg(short, long, default_value_t = DistanceMethods::Levenshtein)]
+        #[arg(short, long, default_value_t = DistanceMethods::Jaccard)]
         distance_method: DistanceMethods,
     },
 }
