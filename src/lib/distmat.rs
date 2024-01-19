@@ -46,7 +46,7 @@ pub enum DistanceMethods {
     Jaccard,
 
     /// Entropy normalized compression distance
-    EntropyNcd,
+    Entropy,
 }
 
 impl fmt::Display for DistanceMethods {
@@ -64,7 +64,7 @@ impl fmt::Display for DistanceMethods {
                 DistanceMethods::LCSSeq => "lcs-seq",
                 DistanceMethods::LCSStr => "lcs-str",
                 DistanceMethods::Jaccard => "jaccard",
-                DistanceMethods::EntropyNcd => "entropy",
+                DistanceMethods::Entropy => "entropy",
             }
         )
     }
@@ -109,7 +109,7 @@ impl DistanceCalculator for DistanceMethods {
             DistanceMethods::LCSSeq => lcsseq(s1, s2),
             DistanceMethods::LCSStr => lcsstr(s1, s2),
             DistanceMethods::Jaccard => jaccard(s1, s2),
-            DistanceMethods::EntropyNcd => entropy_ncd(s1, s2),
+            DistanceMethods::Entropy => entropy_ncd(s1, s2),
         }
     }
 }
