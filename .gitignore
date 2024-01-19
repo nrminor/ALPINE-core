@@ -1,4 +1,6 @@
 target/
 
+test_dataset/
+
 .DS_Store
 ._*

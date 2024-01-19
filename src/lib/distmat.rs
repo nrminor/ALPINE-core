@@ -9,6 +9,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::ErrorKind;
+use std::ops::Mul;
 use textdistance::{
     nstr::{lcsseq, lcsstr},
     str::{damerau_levenshtein, jaro_winkler, levenshtein, ratcliff_obershelp, smith_waterman},
@@ -93,21 +94,22 @@ impl DistanceCalculator for DistanceMethods {
     }
 }
 
-/// Cluster data stores information from each VSEARCH table that is relevant for calling distances
-#[derive(new)]
-struct ClusterData {
-    member_types: String,
-    seq_names: String,
-    cluster_sizes: String,
+/// Cluster columns contains the column names where the information ALPINE needs is stored
+#[derive(new, Debug, Clone)]
+struct ClusterColumns {
+    type_col: String,
+    index_col: String,
+    id_col: String,
+    size_col: String,
 }
 
-fn get_cluster_data(cluster_table: &LazyFrame) -> Result<ClusterData> {
+fn get_cluster_cols(cluster_table: &LazyFrame) -> Result<ClusterColumns> {
     // separate out the columns of information we need
     let cluster_query = cluster_table.clone().collect()?;
     let col_names = cluster_query.get_column_names();
 
-    let member_types = match col_names.first() {
-        Some(member_type) => member_type.to_string(),
+    let type_col = match col_names.first() {
+        Some(col_name) => col_name.to_string(),
         None => {
             eprintln!(
                 "Please double check that the column of VSEARCH cluster types is the first column."
@@ -118,8 +120,20 @@ fn get_cluster_data(cluster_table: &LazyFrame) -> Result<ClusterData> {
         }
     };
 
-    let seq_names = match col_names.get(8) {
-        Some(seq_names) => seq_names.to_string(),
+    let index_col = match col_names.get(1) {
+        Some(col_name) => col_name.to_string(),
+        None => {
+            eprintln!(
+                "Please double check that the column of VSEARCH cluster index is the second column."
+            );
+            return Err(anyhow!(
+                "Column indices could not be parsed from provided cluster table,"
+            ));
+        }
+    };
+
+    let name_col = match col_names.get(8) {
+        Some(col_name) => col_name.to_string(),
         None => {
             eprintln!("Please double check that the column of sequence names is the ninth column.");
             return Err(anyhow!(
@@ -128,8 +142,8 @@ fn get_cluster_data(cluster_table: &LazyFrame) -> Result<ClusterData> {
         }
     };
 
-    let cluster_sizes = match col_names.get(2) {
-        Some(cluster_sizes) => cluster_sizes.to_string(),
+    let size_col = match col_names.get(2) {
+        Some(col_name) => col_name.to_string(),
         None => {
             eprintln!(
                 "Please double check that the column of VSEARCH cluster sizes is the third column."
@@ -140,23 +154,23 @@ fn get_cluster_data(cluster_table: &LazyFrame) -> Result<ClusterData> {
         }
     };
 
-    Ok(ClusterData::new(member_types, seq_names, cluster_sizes))
+    Ok(ClusterColumns::new(type_col, index_col, name_col, size_col))
 }
 
 fn compute_weight(
     centroid_lf: LazyFrame,
-    seq_names: &str,
-    seq_name: &str,
-    cluster_sizes: &str,
+    clust_index: i64,
+    index_col: &str,
+    size_col: &str,
 ) -> Result<f64> {
     let collected_df = centroid_lf
         .clone()
-        .filter(col(seq_names).eq(lit(seq_name)))
-        .select([col(cluster_sizes)])
+        .filter(col(index_col).eq(clust_index))
+        .select([col(size_col)])
         .collect()?;
 
     let attempt = match collected_df
-        .column(cluster_sizes)?
+        .column(size_col)?
         .iter()
         .next() {
             Some(value) => value,
@@ -169,58 +183,78 @@ fn compute_weight(
 fn weight_by_cluster_size(
     seq_name: &str,
     stringency: &Stringency,
-    dist_df: &LazyFrame,
     cluster_table: &LazyFrame,
-) -> Result<LazyFrame> {
-    let cluster_data = get_cluster_data(cluster_table)?;
-    let member_types = cluster_data.member_types;
-    let seq_names = cluster_data.seq_names;
-    let cluster_sizes = cluster_data.cluster_sizes;
+) -> Result<Series> {
+    let clust_cols = get_cluster_cols(cluster_table)?;
 
     // Filter down the df so that only rows representing centroids are present
     let centroid_lf = cluster_table
         .clone()
-        .filter(col(&member_types).eq(lit("C")))
-        .sort(seq_name, Default::default());
-
-    // extract a frame of cluster sizes that are in the same order as the sequences in the distance matrix
-    let all_sizes = centroid_lf
-        .clone()
-        .select([col(&cluster_sizes), col(&seq_names)]);
+        .filter(col(&clust_cols.type_col).eq(lit("C")))
+        .sort(&clust_cols.id_col, Default::default());
 
     // Filter down to hits only and use to get a total number of sequences for the current month
     let hits_df = cluster_table
         .clone()
-        .filter(col(&member_types).eq(lit("H")))
-        .sort(seq_name, Default::default())
+        .filter(
+            col(&clust_cols.type_col)
+                .eq(lit("H"))
+                .or(col(&clust_cols.type_col).eq(lit("S"))),
+        )
+        .sort(&clust_cols.id_col, Default::default())
         .collect()?;
-    let month_total = if hits_df.shape().0 == 0 {
+    let month_total: f64 = if hits_df.shape().0 == 0 {
         1.0
     } else {
         hits_df.shape().0 as f64
     };
 
-    // find cluster size for the accession in question
-    let weighting_size = compute_weight(centroid_lf, &seq_names, seq_name, &cluster_sizes)?;
+    // determine the cluster index for the current cluster member
+    let index: i64 = cluster_table
+        .clone()
+        .filter(col(&clust_cols.id_col).eq(lit(seq_name)))
+        .select(&[col(&clust_cols.index_col)])
+        .collect()?
+        .column(&clust_cols.index_col)?
+        .get(0)?
+        .try_extract::<i64>()?;
+
+    // find cluster size for the member accession in question
+    let weighting_size = compute_weight(
+        centroid_lf,
+        index,
+        &clust_cols.index_col,
+        &clust_cols.size_col,
+    )?;
     let weighting_freq = weighting_size / month_total;
 
     // compute weights lazyframe column
     let weights_lf = match *stringency {
-        Stringency::Strict | Stringency::Extreme => all_sizes.with_column(
-            (col(&cluster_sizes) * lit(weighting_freq.ln() * -1.0))
-                / lit(month_total).alias("Weights"),
-        ),
-        _ => all_sizes
-            .with_column((lit(1) - col(&cluster_sizes)) / lit(month_total).alias("Weights")),
+        Stringency::Strict | Stringency::Extreme => hits_df
+            .lazy()
+            .with_column(
+                ((col(&clust_cols.size_col) * lit(weighting_freq.ln() * -1.0)) / lit(month_total))
+                    .alias(&format!("{}_weights", seq_name)),
+            )
+            .select(&[col(&format!("{}_weights", seq_name))]),
+        _ => hits_df
+            .lazy()
+            .with_column(((lit(1) - col(&clust_cols.size_col)) / lit(month_total)).alias("Weights"))
+            .select(&[col(&format!("{}_weights", seq_name))]),
     };
+
+    let weights = weights_lf
+        .collect()?
+        .column(&format!("{}_weights", seq_name))?
+        .to_owned();
 
     // double check that we now have as many weights as we need
     assert!(
-        weights_lf.clone().collect()?.shape().0 == dist_df.clone().collect()?.shape().0,
+        weights.len() as f64 == month_total,
         "ALPINE was not able to find the same number of clusters as are represented in the centroid distance matrix"
     );
 
-    Ok(weights_lf)
+    Ok(weights)
 }
 
 fn unpack_sequence(record: &fasta::Record) -> std::io::Result<String> {
@@ -241,7 +275,6 @@ fn unpack_sequence(record: &fasta::Record) -> std::io::Result<String> {
 fn collect_fa_data(fasta: &str) -> Result<(Vec<String>, Vec<String>)> {
     // pull out record IDs and sequences into their own string vectors, while
     // handling potential bgzip compression
-    // let (ids, sequences): (Vec<String>, Vec<String>)
     let parsed_fasta: std::io::Result<Vec<(String, String)>> = if fasta.ends_with(".gz") {
         File::open(fasta)
             .map(bgzf::Reader::new)
@@ -299,43 +332,45 @@ pub fn compute_distance_matrix(
     pw_distmat.set_labels(ids.clone());
 
     // pull distmat information out of the SquareMatrix struct and convert to dataframe
-    let mut dist_col_vev: Vec<Series> = Vec::with_capacity(pw_distmat.size());
+    let mut dist_col_vev: Vec<Series> = vec![Default::default(); pw_distmat.size()];
     for (i, (column, label)) in pw_distmat
         .iter_cols()
         .zip(pw_distmat.iter_labels())
         .enumerate()
     {
         let series = Series::new(label, column.collect::<Vec<f64>>());
-        dist_col_vev[i] = series
+        dist_col_vev[i] = series;
     }
-    let mut dist_lf = DataFrame::new(dist_col_vev)?.lazy();
+    let mut dist_df = DataFrame::new(dist_col_vev)?;
 
     // read the cluster table into a lazyframe to query for cluster-size-based distance weights
     let cluster_df = CsvReader::from_path(cluster_table)?
         .has_header(false)
+        .with_delimiter(b'\t')
         .finish()?
         .lazy();
 
     // multiply weights onto each column based on the sequence it represents
     for id in ids {
-        let weights_lf = weight_by_cluster_size(&id, stringency, &dist_lf, &cluster_df)?;
-        dist_lf = dist_lf.join(
-            weights_lf,
-            [col(&id)],
-            [col(&id)],
-            JoinArgs::new(JoinType::Cross),
-        );
+        let weights = weight_by_cluster_size(&id, stringency, &cluster_df)?;
+        eprintln!("Weights prepared for joining:\n{:?}", weights);
+        let weights_header = format!("{}_weights", id);
+        dist_df = dist_df
+            .hstack(&[weights])?
+            .lazy()
+            .with_columns(&[col(&id).mul(col(&weights_header)).alias(&id)])
+            .collect()?
+            .drop(&weights_header)?
     }
-    let mut final_df = dist_lf.collect()?;
 
     // write out the weighted distance matrix
     let out_name = format!("{}-distmat.csv", yearmonth);
     let out_handle = File::create(out_name).expect(
-        "File could not be create to write the distance matrix to. Please check file-write permissions."
+        "File could not be created to write the distance matrix to. Please check file-write permissions."
     );
     CsvWriter::new(out_handle)
         .has_header(true)
-        .finish(&mut final_df)
+        .finish(&mut dist_df)
         .expect("Weighted distance matrix could not be written.");
 
     Ok(())
