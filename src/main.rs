@@ -31,6 +31,7 @@ similar analyses themselves via the command line.
 #[derive(Parser)]
 #[clap(name = "alpine")]
 #[clap(about = INFO)]
+#[clap(version = "v0.1.1")]
 struct Cli {
     #[command(flatten)]
     verbose: clap_verbosity_flag::Verbosity,
