@@ -31,5 +31,5 @@ else
 fi
 
 # install ALPINE.rs
-echo "Now installing ALPINE tools"
-cargo build --release
+echo "Now installing ALPINE core tools"
+cargo install alpine-core
