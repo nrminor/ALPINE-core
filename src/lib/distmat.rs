@@ -406,15 +406,17 @@ pub fn compute_distance_matrix(
         .lazy();
 
     // multiply weights onto each column based on the sequence it represents
-    for id in ids {
-        let (weights_header, weights) = weight_by_cluster_size(&id, stringency, &cluster_df)?;
+    for id in &ids {
+        let (weights_header, weights) = weight_by_cluster_size(id, stringency, &cluster_df)?;
         dist_df = dist_df
             .hstack(&[weights])?
             .lazy()
-            .with_columns(&[col(&id).mul(col(&weights_header)).alias(&id)])
+            .with_columns(&[col(id).mul(col(&weights_header)).alias(id)])
             .collect()?
             .drop(&weights_header)?
     }
+    let col_series = Series::new("Sequence_Name", &ids);
+    let dist_df = dist_df.with_column(col_series)?;
 
     // write out the weighted distance matrix
     let out_name = format!("{}-dist-matrix.csv", yearmonth);
@@ -423,7 +425,7 @@ pub fn compute_distance_matrix(
     );
     CsvWriter::new(out_handle)
         .has_header(true)
-        .finish(&mut dist_df)
+        .finish(dist_df)
         .expect("Weighted distance matrix could not be written.");
 
     Ok(())
