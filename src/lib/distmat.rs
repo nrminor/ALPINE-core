@@ -115,6 +115,43 @@ impl DistanceCalculator for DistanceMethods {
     }
 }
 
+fn collect_fa_data(fasta: &str) -> Result<(Vec<String>, Vec<Rc<str>>)> {
+    // pull out record IDs and sequences into their own string vectors, while
+    // handling potential bgzip compression
+    let parsed_fasta: std::io::Result<Vec<(String, Rc<str>)>> = if fasta.ends_with(".gz") {
+        File::open(fasta)
+            .map(bgzf::Reader::new)
+            .map(fasta::Reader::new)?
+            .records()
+            .map(|result| {
+                result.and_then(|record| {
+                    let id = record.name().to_owned();
+                    unpack_sequence(&record).map(|sequence_string| (id, Rc::from(sequence_string)))
+                })
+            })
+            .collect()
+    } else {
+        File::open(fasta)
+            .map(BufReader::new)
+            .map(fasta::Reader::new)?
+            .records()
+            .map(|result| {
+                result.and_then(|record| {
+                    let id = record.name().to_owned();
+                    unpack_sequence(&record).map(|sequence_string| (id, Rc::from(sequence_string)))
+                })
+            })
+            .collect()
+    };
+
+    let (ids, sequences) = match parsed_fasta {
+        Ok(pairs) => pairs.into_iter().unzip(),
+        Err(e) => return Err(e.into()),
+    };
+
+    Ok((ids, sequences))
+}
+
 /// Cluster columns contains the column names where the information ALPINE needs is stored
 #[derive(new, Debug, Clone)]
 struct ClusterColumns {
@@ -327,47 +364,49 @@ fn unpack_sequence(record: &fasta::Record) -> std::io::Result<String> {
     Ok(seq_as_string)
 }
 
-fn collect_fa_data(fasta: &str) -> Result<(Vec<String>, Vec<Rc<str>>)> {
-    // pull out record IDs and sequences into their own string vectors, while
-    // handling potential bgzip compression
-    let parsed_fasta: std::io::Result<Vec<(String, Rc<str>)>> = if fasta.ends_with(".gz") {
-        File::open(fasta)
-            .map(bgzf::Reader::new)
-            .map(fasta::Reader::new)?
-            .records()
-            .map(|result| {
-                result.and_then(|record| {
-                    let id = record.name().to_owned();
-                    unpack_sequence(&record).map(|sequence_string| (id, Rc::from(sequence_string)))
-                })
-            })
-            .collect()
-    } else {
-        File::open(fasta)
-            .map(BufReader::new)
-            .map(fasta::Reader::new)?
-            .records()
-            .map(|result| {
-                result.and_then(|record| {
-                    let id = record.name().to_owned();
-                    unpack_sequence(&record).map(|sequence_string| (id, Rc::from(sequence_string)))
-                })
-            })
-            .collect()
+fn process_cluster_info(
+    cluster_table: Option<&str>,
+    dist_col_vec: Vec<Series>,
+    ids: &Vec<String>,
+    stringency: &Stringency,
+) -> Result<DataFrame> {
+    let mut dist_df = DataFrame::new(dist_col_vec)?;
+    dist_df = match cluster_table {
+        Some(table) => {
+            // read the cluster table into a lazyframe to query for cluster-size-based distance weights
+            let cluster_df = CsvReader::from_path(table)?
+                .has_header(false)
+                .with_delimiter(b'\t')
+                .finish()?
+                .lazy();
+
+            // multiply weights onto each column based on the sequence it represents
+            for id in ids {
+                let (weights_header, weights) =
+                    weight_by_cluster_size(id, stringency, &cluster_df)?;
+                dist_df = dist_df
+                    .hstack(&[weights])?
+                    .lazy()
+                    .with_columns(&[col(id).mul(col(&weights_header)).alias(id)])
+                    .collect()?
+                    .drop(&weights_header)?
+            }
+            let col_series = Series::new("Sequence_Name", &ids);
+            dist_df.hstack(&[col_series])?
+        }
+        None => {
+            let col_series = Series::new("Sequence_Name", &ids);
+            dist_df.hstack(&[col_series])?
+        }
     };
 
-    let (ids, sequences) = match parsed_fasta {
-        Ok(pairs) => pairs.into_iter().unzip(),
-        Err(e) => return Err(e.into()),
-    };
-
-    Ok((ids, sequences))
+    Ok(dist_df)
 }
 
 pub fn compute_distance_matrix(
     fasta: &str,
-    cluster_table: &str,
-    yearmonth: &str,
+    cluster_table: Option<&str>,
+    label: &str,
     stringency: &Stringency,
     distance_method: &DistanceMethods,
 ) -> Result<()> {
@@ -387,39 +426,20 @@ pub fn compute_distance_matrix(
     pw_distmat.set_labels(ids.clone());
 
     // pull distmat information out of the SquareMatrix struct and convert to dataframe
-    let mut dist_col_vev: Vec<Series> = vec![Default::default(); pw_distmat.size()];
+    let mut dist_col_vec: Vec<Series> = vec![Default::default(); pw_distmat.size()];
     for (i, (column, label)) in pw_distmat
         .iter_cols()
         .zip(pw_distmat.iter_labels())
         .enumerate()
     {
         let series = Series::new(label, column.collect::<Vec<f64>>());
-        dist_col_vev[i] = series;
+        dist_col_vec[i] = series;
     }
-    let mut dist_df = DataFrame::new(dist_col_vev)?;
 
-    // read the cluster table into a lazyframe to query for cluster-size-based distance weights
-    let cluster_df = CsvReader::from_path(cluster_table)?
-        .has_header(false)
-        .with_delimiter(b'\t')
-        .finish()?
-        .lazy();
-
-    // multiply weights onto each column based on the sequence it represents
-    for id in &ids {
-        let (weights_header, weights) = weight_by_cluster_size(id, stringency, &cluster_df)?;
-        dist_df = dist_df
-            .hstack(&[weights])?
-            .lazy()
-            .with_columns(&[col(id).mul(col(&weights_header)).alias(id)])
-            .collect()?
-            .drop(&weights_header)?
-    }
-    let col_series = Series::new("Sequence_Name", &ids);
-    dist_df = dist_df.hstack(&[col_series])?;
+    let mut dist_df = process_cluster_info(cluster_table, dist_col_vec, &ids, stringency)?;
 
     // write out the weighted distance matrix
-    let out_name = format!("{}-dist-matrix.csv", yearmonth);
+    let out_name = format!("{}-dist-matrix.csv", label);
     let out_handle = File::create(out_name).expect(
         "File could not be created to write the distance matrix to. Please check file-write permissions."
     );

@@ -100,11 +100,11 @@ enum Commands {
 
         /// Tab-delimited table of cluster metadata provided by `VSEARCH` clustering algorithms.
         #[arg(short, long, required = true)]
-        cluster_table: String,
+        cluster_table: Option<String>,
 
         /// Label for the output distance matrix. The ALPINE pipeline uses a chronological "year-date" here.
         #[arg(short, long, required = true)]
-        yearmonth: String,
+        label: String,
 
         /// How strictly to differentiate high- from low-distance clusters.
         #[arg(short, long, required = false, default_value_t = Stringency::Strict)]
@@ -147,14 +147,14 @@ async fn run() -> Result<()> {
         Some(Commands::DistanceMatrix {
             fasta,
             cluster_table,
-            yearmonth,
+            label,
             stringency,
             distance_method,
         }) => {
             distmat::compute_distance_matrix(
                 fasta,
-                cluster_table,
-                yearmonth,
+                cluster_table.as_deref(),
+                label,
                 stringency,
                 distance_method,
             )?;
