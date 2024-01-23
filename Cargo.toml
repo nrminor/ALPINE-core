@@ -10,6 +10,7 @@ homepage = "https://github.com/nrminor/ALPINE-core"
 documentation = "https://github.com/nrminor/ALPINE-core/blob/main/README.md"
 keywords = ["science", "reproducibility", "bioinformatics", "data"]
 categories = ["command-line-utilities", "science"]
+exclude = [".DS_Store"]
 
 [lib]
 name = "alpine"
