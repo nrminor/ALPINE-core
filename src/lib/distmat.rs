@@ -417,7 +417,7 @@ pub fn compute_distance_matrix(
     }
 
     // write out the weighted distance matrix
-    let out_name = format!("{}-distmat.csv", yearmonth);
+    let out_name = format!("{}-dist-matrix.csv", yearmonth);
     let out_handle = File::create(out_name).expect(
         "File could not be created to write the distance matrix to. Please check file-write permissions."
     );
