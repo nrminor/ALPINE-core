@@ -99,7 +99,7 @@ enum Commands {
         fasta: String,
 
         /// Tab-delimited table of cluster metadata provided by `VSEARCH` clustering algorithms.
-        #[arg(short, long, required = true)]
+        #[arg(short, long, required = false)]
         cluster_table: Option<String>,
 
         /// Label for the output distance matrix. The ALPINE pipeline uses a chronological "year-date" here.
