@@ -102,7 +102,11 @@ fn adjusted_hamming(alpha: &[u8], beta: &[u8]) -> f64 {
     let beta_n_count = beta.par_iter().filter(|&&base| base == b'N').count();
 
     // compute an offset to subtract from the raw distance
-    let mask_offset = (alpha_n_count + beta_n_count) as f64;
+    let mask_offset = if alpha_n_count > beta_n_count {
+        alpha_n_count as f64
+    } else {
+        beta_n_count as f64
+    };
 
     // compute this distance score with a Rust-bio SIMD computation
     let unadjusted_dist = hamming(alpha, beta) as f64;
@@ -116,7 +120,11 @@ fn adjusted_levenshtein(alpha: &[u8], beta: &[u8]) -> f64 {
     let beta_n_count = beta.par_iter().filter(|&&base| base == b'N').count();
 
     // compute an offset to subtract from the raw distance
-    let mask_offset = (alpha_n_count + beta_n_count) as f64;
+    let mask_offset = if alpha_n_count > beta_n_count {
+        alpha_n_count as f64
+    } else {
+        beta_n_count as f64
+    };
 
     // compute this distance score with a Rust-bio SIMD computation
     let unadjusted_dist = levenshtein(alpha, beta) as f64;
