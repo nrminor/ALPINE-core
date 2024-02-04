@@ -23,6 +23,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0.75"
 arrow = "46.0.0"
+bio = "1.5.0"
 chrono = "0.4.30"
 clap = { version = "4.4.3", features = ["derive", "cargo"]}
 clap-verbosity-flag = "2.1.1"

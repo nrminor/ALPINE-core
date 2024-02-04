@@ -1,5 +1,6 @@
 use anyhow::anyhow;
 use anyhow::Result;
+use bio::alignment::distance::simd::levenshtein;
 use clap::ValueEnum;
 use derive_new::new;
 use distmat::SquareMatrix;
@@ -13,7 +14,7 @@ use std::ops::Mul;
 use std::rc::Rc;
 use textdistance::{
     nstr::{lcsseq, lcsstr},
-    str::{damerau_levenshtein, jaro_winkler, levenshtein, ratcliff_obershelp, smith_waterman},
+    str::{damerau_levenshtein, jaro_winkler, ratcliff_obershelp, smith_waterman},
     str::{entropy_ncd, hamming, jaccard},
 };
 
@@ -102,7 +103,7 @@ impl DistanceCalculator for DistanceMethods {
     fn calculate_distance(&self, s1: &str, s2: &str) -> f64 {
         match self {
             DistanceMethods::Hamming => hamming(s1, s2) as f64,
-            DistanceMethods::Levenshtein => levenshtein(s1, s2) as f64,
+            DistanceMethods::Levenshtein => levenshtein(s1.as_bytes(), s2.as_bytes()) as f64,
             DistanceMethods::DamerauLevenshtein => damerau_levenshtein(s1, s2) as f64,
             DistanceMethods::JaroWinkler => jaro_winkler(s1, s2),
             DistanceMethods::SmithWaterman => smith_waterman(s1, s2) as f64,
