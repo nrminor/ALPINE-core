@@ -6,12 +6,13 @@ use derive_new::new;
 use distmat::SquareMatrix;
 use noodles::{bgzf, fasta};
 use polars::{lazy::dsl::col, prelude::*};
+use rayon::prelude::*;
 use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::ErrorKind;
 use std::ops::Mul;
-use std::rc::Rc;
+use std::sync::Arc;
 use textdistance::{
     nstr::{lcsseq, lcsstr},
     str::{damerau_levenshtein, jaro_winkler, ratcliff_obershelp, smith_waterman},
@@ -95,6 +96,34 @@ impl fmt::Display for Stringency {
     }
 }
 
+fn adjusted_hamming(alpha: &[u8], beta: &[u8]) -> f64 {
+    // count the number of masked bases ("N") in the input sequences
+    let alpha_n_count = alpha.par_iter().filter(|&&base| base == b'N').count();
+    let beta_n_count = beta.par_iter().filter(|&&base| base == b'N').count();
+
+    // compute an offset to subtract from the raw distance
+    let mask_offset = (alpha_n_count + beta_n_count) as f64;
+
+    // compute this distance score with a Rust-bio SIMD computation
+    let unadjusted_dist = hamming(alpha, beta) as f64;
+
+    unadjusted_dist - mask_offset
+}
+
+fn adjusted_levenshtein(alpha: &[u8], beta: &[u8]) -> f64 {
+    // count the number of masked bases ("N") in the input sequences
+    let alpha_n_count = alpha.par_iter().filter(|&&base| base == b'N').count();
+    let beta_n_count = beta.par_iter().filter(|&&base| base == b'N').count();
+
+    // compute an offset to subtract from the raw distance
+    let mask_offset = (alpha_n_count + beta_n_count) as f64;
+
+    // compute this distance score with a Rust-bio SIMD computation
+    let unadjusted_dist = levenshtein(alpha, beta) as f64;
+
+    unadjusted_dist - mask_offset
+}
+
 trait DistanceCalculator {
     fn calculate_distance(&self, s1: &str, s2: &str) -> f64;
 }
@@ -102,8 +131,8 @@ trait DistanceCalculator {
 impl DistanceCalculator for DistanceMethods {
     fn calculate_distance(&self, s1: &str, s2: &str) -> f64 {
         match self {
-            DistanceMethods::Hamming => hamming(s1.as_bytes(), s2.as_bytes()) as f64,
-            DistanceMethods::Levenshtein => levenshtein(s1.as_bytes(), s2.as_bytes()) as f64,
+            DistanceMethods::Hamming => adjusted_hamming(s1.as_bytes(), s2.as_bytes()),
+            DistanceMethods::Levenshtein => adjusted_levenshtein(s1.as_bytes(), s2.as_bytes()),
             DistanceMethods::DamerauLevenshtein => damerau_levenshtein(s1, s2) as f64,
             DistanceMethods::JaroWinkler => jaro_winkler(s1, s2),
             DistanceMethods::SmithWaterman => smith_waterman(s1, s2) as f64,
@@ -116,10 +145,10 @@ impl DistanceCalculator for DistanceMethods {
     }
 }
 
-fn collect_fa_data(fasta: &str) -> Result<(Vec<String>, Vec<Rc<str>>)> {
+fn collect_fa_data(fasta: &str) -> Result<(Vec<String>, Vec<Arc<str>>)> {
     // pull out record IDs and sequences into their own string vectors, while
     // handling potential bgzip compression
-    let parsed_fasta: std::io::Result<Vec<(String, Rc<str>)>> = if fasta.ends_with(".gz") {
+    let parsed_fasta: std::io::Result<Vec<(String, Arc<str>)>> = if fasta.ends_with(".gz") {
         File::open(fasta)
             .map(bgzf::Reader::new)
             .map(fasta::Reader::new)?
@@ -127,7 +156,7 @@ fn collect_fa_data(fasta: &str) -> Result<(Vec<String>, Vec<Rc<str>>)> {
             .map(|result| {
                 result.and_then(|record| {
                     let id = record.name().to_owned();
-                    unpack_sequence(&record).map(|sequence_string| (id, Rc::from(sequence_string)))
+                    unpack_sequence(&record).map(|sequence_string| (id, Arc::from(sequence_string)))
                 })
             })
             .collect()
@@ -139,7 +168,7 @@ fn collect_fa_data(fasta: &str) -> Result<(Vec<String>, Vec<Rc<str>>)> {
             .map(|result| {
                 result.and_then(|record| {
                     let id = record.name().to_owned();
-                    unpack_sequence(&record).map(|sequence_string| (id, Rc::from(sequence_string)))
+                    unpack_sequence(&record).map(|sequence_string| (id, Arc::from(sequence_string)))
                 })
             })
             .collect()
@@ -156,10 +185,10 @@ fn collect_fa_data(fasta: &str) -> Result<(Vec<String>, Vec<Rc<str>>)> {
 /// Cluster columns contains the column names where the information ALPINE needs is stored
 #[derive(new, Debug, Clone)]
 struct ClusterColumns {
-    type_col: Rc<str>,
-    index_col: Rc<str>,
-    id_col: Rc<str>,
-    size_col: Rc<str>,
+    type_col: Arc<str>,
+    index_col: Arc<str>,
+    id_col: Arc<str>,
+    size_col: Arc<str>,
 }
 
 fn get_cluster_cols(cluster_table: &LazyFrame) -> Result<ClusterColumns> {
@@ -167,8 +196,8 @@ fn get_cluster_cols(cluster_table: &LazyFrame) -> Result<ClusterColumns> {
     let cluster_query = cluster_table.clone().collect()?;
     let col_names = cluster_query.get_column_names();
 
-    let type_col: Rc<str> = match col_names.first() {
-        Some(col_name) => Rc::from(col_name.to_string()),
+    let type_col: Arc<str> = match col_names.first() {
+        Some(col_name) => Arc::from(col_name.to_string()),
         None => {
             eprintln!(
                 "Please double check that the column of VSEARCH cluster types is the first column."
@@ -179,8 +208,8 @@ fn get_cluster_cols(cluster_table: &LazyFrame) -> Result<ClusterColumns> {
         }
     };
 
-    let index_col: Rc<str> = match col_names.get(1) {
-        Some(col_name) => Rc::from(col_name.to_string()),
+    let index_col: Arc<str> = match col_names.get(1) {
+        Some(col_name) => Arc::from(col_name.to_string()),
         None => {
             eprintln!(
                 "Please double check that the column of VSEARCH cluster index is the second column."
@@ -191,8 +220,8 @@ fn get_cluster_cols(cluster_table: &LazyFrame) -> Result<ClusterColumns> {
         }
     };
 
-    let name_col: Rc<str> = match col_names.get(8) {
-        Some(col_name) => Rc::from(col_name.to_string()),
+    let name_col: Arc<str> = match col_names.get(8) {
+        Some(col_name) => Arc::from(col_name.to_string()),
         None => {
             eprintln!("Please double check that the column of sequence names is the ninth column.");
             return Err(anyhow!(
@@ -201,8 +230,8 @@ fn get_cluster_cols(cluster_table: &LazyFrame) -> Result<ClusterColumns> {
         }
     };
 
-    let size_col: Rc<str> = match col_names.get(2) {
-        Some(col_name) => Rc::from(col_name.to_string()),
+    let size_col: Arc<str> = match col_names.get(2) {
+        Some(col_name) => Arc::from(col_name.to_string()),
         None => {
             eprintln!(
                 "Please double check that the column of VSEARCH cluster sizes is the third column."

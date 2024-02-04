@@ -3,6 +3,7 @@ use derive_new::new;
 use noodles::{bgzf, fasta};
 use polars::prelude::*;
 use polars_io::ipc::IpcReader;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
@@ -94,7 +95,7 @@ pub fn filter_by_n(
         let count_n = (sequence
             .get(..)
             .unwrap()
-            .iter()
+            .par_iter()
             .filter(|&&c| c as char == 'N' || c as char == '-')
             .count() as i32
             + incompleteness) as f32;

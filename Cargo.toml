@@ -34,6 +34,7 @@ distmat = "0.3.0"
 noodles = { version = "0.60.0", features = ["async", "fasta", "bgzf"] }
 polars = {version = "0.32.1", features = ["lazy", "csv", "polars-io"] }
 polars-io = "0.32.1"
+rayon = "1.8.1"
 textdistance = "1.0.2"
 tokio = { version = "1.32.0", features = ["full"] }
 

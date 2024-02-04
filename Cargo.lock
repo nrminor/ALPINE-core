@@ -63,6 +63,7 @@ dependencies = [
  "noodles",
  "polars",
  "polars-io",
+ "rayon",
  "textdistance",
  "tokio",
 ]
