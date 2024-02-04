@@ -111,7 +111,13 @@ fn adjusted_hamming(alpha: &[u8], beta: &[u8]) -> f64 {
     // compute this distance score with a Rust-bio SIMD computation
     let unadjusted_dist = hamming(alpha, beta) as f64;
 
-    unadjusted_dist - mask_offset
+    // crude distance adjustment (See below)
+    let diff = unadjusted_dist - mask_offset;
+    if diff < 0_f64 {
+        0_f64
+    } else {
+        diff
+    }
 }
 
 fn adjusted_levenshtein(alpha: &[u8], beta: &[u8]) -> f64 {
@@ -129,7 +135,20 @@ fn adjusted_levenshtein(alpha: &[u8], beta: &[u8]) -> f64 {
     // compute this distance score with a Rust-bio SIMD computation
     let unadjusted_dist = levenshtein(alpha, beta) as f64;
 
-    unadjusted_dist - mask_offset
+    // EXPERIMENTAL:
+    // it's possible that many string distances will in fact be
+    // called because of masked bases, which in this case, we'd
+    // like to ignore. Here, we adjust the computed distance
+    // by subtracting the count of N's from the sequence with the
+    // most N's. If there are more N's than differences, we simply
+    // call the distance 0. This is a crude approach and will be
+    // changed in the future.
+    let diff = unadjusted_dist - mask_offset;
+    if diff < 0_f64 {
+        0_f64
+    } else {
+        diff
+    }
 }
 
 trait DistanceCalculator {
