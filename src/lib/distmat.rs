@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 use anyhow::Result;
 use bio::alignment::distance::simd::{hamming, levenshtein};
+use block_aligner::{scan_block::*, scores::*};
 use clap::ValueEnum;
 use derive_new::new;
 use distmat::SquareMatrix;
@@ -21,7 +22,10 @@ use textdistance::{
 
 #[derive(ValueEnum, Debug, Clone, PartialEq)]
 pub enum DistanceMethods {
-    /// Hamming edit distance
+    /// Default distance based on block-alignment
+    Default,
+
+    /// Hamming edit distance (NOTE: Only works with aligned sequences)
     Hamming,
 
     /// Levenshtein edit distance
@@ -58,6 +62,7 @@ impl fmt::Display for DistanceMethods {
             f,
             "{}",
             match self {
+                DistanceMethods::Default => "block-alignment",
                 DistanceMethods::Hamming => "hamming",
                 DistanceMethods::Levenshtein => "levenshtein",
                 DistanceMethods::DamerauLevenshtein => "damerau-levenshtein",
@@ -96,59 +101,39 @@ impl fmt::Display for Stringency {
     }
 }
 
-fn adjusted_hamming(alpha: &[u8], beta: &[u8]) -> f64 {
-    // count the number of masked bases ("N") in the input sequences
-    let alpha_n_count = alpha.par_iter().filter(|&&base| base == b'N').count();
-    let beta_n_count = beta.par_iter().filter(|&&base| base == b'N').count();
+fn nuc_aware_dist(alpha: &[u8], beta: &[u8]) -> f64 {
+    // set up parameters for alignment
+    let min_block_size = 32;
+    let max_block_size = 256;
 
-    // compute an offset to subtract from the raw distance
-    let mask_offset = if alpha_n_count > beta_n_count {
-        alpha_n_count as f64
-    } else {
-        beta_n_count as f64
+    // pack nucleotide bytes into SIMD-able blocks
+    let reference = PaddedBytes::from_bytes::<NucMatrix>(alpha, max_block_size);
+    let query = PaddedBytes::from_bytes::<NucMatrix>(beta, max_block_size);
+
+    // set up parameters for how matches, mismatches, and gaps are scored
+    let mut scoring_matrix = NucMatrix::new_simple(1, -1);
+    scoring_matrix.set(b'N', b'A', 0);
+    scoring_matrix.set(b'N', b'T', 0);
+    scoring_matrix.set(b'N', b'G', 0);
+    scoring_matrix.set(b'N', b'C', 0);
+    let gap_penalty = Gaps {
+        open: -2,
+        extend: -1,
     };
 
-    // compute this distance score with a Rust-bio SIMD computation
-    let unadjusted_dist = hamming(alpha, beta) as f64;
+    // instantiate an aligner
+    let mut aligner = Block::<true, false>::new(query.len(), reference.len(), max_block_size);
+    aligner.align(
+        &query,
+        &reference,
+        &scoring_matrix,
+        gap_penalty,
+        min_block_size..=max_block_size,
+        0,
+    );
 
-    // crude distance adjustment (See below)
-    let diff = unadjusted_dist - mask_offset;
-    if diff < 0_f64 {
-        0_f64
-    } else {
-        diff
-    }
-}
-
-fn adjusted_levenshtein(alpha: &[u8], beta: &[u8]) -> f64 {
-    // count the number of masked bases ("N") in the input sequences
-    let alpha_n_count = alpha.par_iter().filter(|&&base| base == b'N').count();
-    let beta_n_count = beta.par_iter().filter(|&&base| base == b'N').count();
-
-    // compute an offset to subtract from the raw distance
-    let mask_offset = if alpha_n_count > beta_n_count {
-        alpha_n_count as f64
-    } else {
-        beta_n_count as f64
-    };
-
-    // compute this distance score with a Rust-bio SIMD computation
-    let unadjusted_dist = levenshtein(alpha, beta) as f64;
-
-    // EXPERIMENTAL:
-    // it's possible that many string distances will in fact be
-    // called because of masked bases, which in this case, we'd
-    // like to ignore. Here, we adjust the computed distance
-    // by subtracting the count of N's from the sequence with the
-    // most N's. If there are more N's than differences, we simply
-    // call the distance 0. This is a crude approach and will be
-    // changed in the future.
-    let diff = unadjusted_dist - mask_offset;
-    if diff < 0_f64 {
-        0_f64
-    } else {
-        diff
-    }
+    // return the final score
+    aligner.res().score as f64
 }
 
 trait DistanceCalculator {
@@ -158,8 +143,9 @@ trait DistanceCalculator {
 impl DistanceCalculator for DistanceMethods {
     fn calculate_distance(&self, s1: &str, s2: &str) -> f64 {
         match self {
-            DistanceMethods::Hamming => adjusted_hamming(s1.as_bytes(), s2.as_bytes()),
-            DistanceMethods::Levenshtein => adjusted_levenshtein(s1.as_bytes(), s2.as_bytes()),
+            DistanceMethods::Default => nuc_aware_dist(s1.as_bytes(), s2.as_bytes()),
+            DistanceMethods::Hamming => hamming(s1.as_bytes(), s2.as_bytes()) as f64,
+            DistanceMethods::Levenshtein => levenshtein(s1.as_bytes(), s2.as_bytes()) as f64,
             DistanceMethods::DamerauLevenshtein => damerau_levenshtein(s1, s2) as f64,
             DistanceMethods::JaroWinkler => jaro_winkler(s1, s2),
             DistanceMethods::SmithWaterman => smith_waterman(s1, s2) as f64,
@@ -202,7 +188,7 @@ fn collect_fa_data(fasta: &str) -> Result<(Vec<String>, Vec<Arc<str>>)> {
     };
 
     let (ids, sequences) = match parsed_fasta {
-        Ok(pairs) => pairs.into_iter().unzip(),
+        Ok(pairs) => pairs.into_par_iter().unzip(),
         Err(e) => return Err(e.into()),
     };
 

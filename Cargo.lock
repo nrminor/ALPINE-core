@@ -53,6 +53,7 @@ dependencies = [
  "anyhow",
  "arrow",
  "bio",
+ "block-aligner",
  "chrono",
  "clap",
  "clap-verbosity-flag",
@@ -544,6 +545,12 @@ name = "bitflags"
 version = "2.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed570934406eb16438a4e976b1b4500774099c13b8cb96eec99f620f05090ddf"
+
+[[package]]
+name = "block-aligner"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1985264f87e4c9af3cbea155852fa827edbd03b3b14097988eaf0f574b51c045"
 
 [[package]]
 name = "block-buffer"
