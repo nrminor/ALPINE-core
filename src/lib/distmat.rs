@@ -96,7 +96,7 @@ fn generate_score_matrix() -> NucMatrix {
     // generate mutable scoring matrix to use for constraining
     // the characters that will be counted toward mismatches.
     // Only A's, T's, G's, C's, U's, and -'s will count.
-    let mut scoring_matrix = NucMatrix::new_simple(1, -1);
+    let mut scoring_matrix = NucMatrix::new_simple(0, -1);
 
     /*
     KEY FOR AMBIGUOUS BASES
