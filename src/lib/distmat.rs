@@ -92,7 +92,98 @@ impl fmt::Display for Stringency {
     }
 }
 
-fn nuc_aware_dist(alpha: &[u8], beta: &[u8]) -> f64 {
+fn generate_score_matrix() -> NucMatrix {
+    // generate mutable scoring matrix to use for constraining
+    // the characters that will be counted toward mismatches.
+    // Only A's, T's, G's, C's, U's, and -'s will count.
+    let mut scoring_matrix = NucMatrix::new_simple(0, 1);
+
+    /*
+    KEY FOR AMBIGUOUS BASES
+    =======================
+    N: Any nucleotide (A or C or G or T or U)
+    R: Purine (A or G)
+    Y: Pyrimidine (T or C)
+    K: Keto (G or T)
+    M: Amino (A or C)
+    S: Strong interaction (3 H bonds) (G or C)
+    W: Weak interaction (2 H bonds) (A or T)
+    B: Not A (C or G or T)
+    D: Not C (A or G or T)
+    H: Not G (A or C or T)
+    V: Not T or U (A or C or G)
+    */
+
+    // account for masked "any" bases, N
+    scoring_matrix.set(b'N', b'A', 0);
+    scoring_matrix.set(b'N', b'T', 0);
+    scoring_matrix.set(b'N', b'G', 0);
+    scoring_matrix.set(b'N', b'C', 0);
+
+    // account for any purine bases, R
+    scoring_matrix.set(b'R', b'A', 0);
+    scoring_matrix.set(b'R', b'T', 0);
+    scoring_matrix.set(b'R', b'G', 0);
+    scoring_matrix.set(b'R', b'C', 0);
+
+    // account for any Pyrimidine bases, Y
+    scoring_matrix.set(b'Y', b'A', 0);
+    scoring_matrix.set(b'Y', b'T', 0);
+    scoring_matrix.set(b'Y', b'G', 0);
+    scoring_matrix.set(b'Y', b'C', 0);
+
+    // account for any Keto bases, K
+    scoring_matrix.set(b'K', b'A', 0);
+    scoring_matrix.set(b'K', b'T', 0);
+    scoring_matrix.set(b'K', b'G', 0);
+    scoring_matrix.set(b'K', b'C', 0);
+
+    // account for any amino bases, M
+    scoring_matrix.set(b'M', b'A', 0);
+    scoring_matrix.set(b'M', b'T', 0);
+    scoring_matrix.set(b'M', b'G', 0);
+    scoring_matrix.set(b'M', b'C', 0);
+
+    // account for any strong interaction bases, S
+    scoring_matrix.set(b'S', b'A', 0);
+    scoring_matrix.set(b'S', b'T', 0);
+    scoring_matrix.set(b'S', b'G', 0);
+    scoring_matrix.set(b'S', b'C', 0);
+
+    // account for and weak interaction bases, W
+    scoring_matrix.set(b'W', b'A', 0);
+    scoring_matrix.set(b'W', b'T', 0);
+    scoring_matrix.set(b'W', b'G', 0);
+    scoring_matrix.set(b'W', b'C', 0);
+
+    // account for any "not A" bases, B
+    scoring_matrix.set(b'B', b'A', 0);
+    scoring_matrix.set(b'B', b'T', 0);
+    scoring_matrix.set(b'B', b'G', 0);
+    scoring_matrix.set(b'B', b'C', 0);
+
+    // account for and "not C" bases, D
+    scoring_matrix.set(b'D', b'A', 0);
+    scoring_matrix.set(b'D', b'T', 0);
+    scoring_matrix.set(b'D', b'G', 0);
+    scoring_matrix.set(b'D', b'C', 0);
+
+    // account for any "not G" bases, H
+    scoring_matrix.set(b'H', b'A', 0);
+    scoring_matrix.set(b'H', b'T', 0);
+    scoring_matrix.set(b'H', b'G', 0);
+    scoring_matrix.set(b'H', b'C', 0);
+
+    // account for any "not T or U" bases, V
+    scoring_matrix.set(b'V', b'A', 0);
+    scoring_matrix.set(b'V', b'T', 0);
+    scoring_matrix.set(b'V', b'G', 0);
+    scoring_matrix.set(b'V', b'C', 0);
+
+    scoring_matrix
+}
+
+fn block_distance(alpha: &[u8], beta: &[u8]) -> f64 {
     // set up parameters for alignment
     let min_block_size = 32;
     let max_block_size = 256;
@@ -102,16 +193,11 @@ fn nuc_aware_dist(alpha: &[u8], beta: &[u8]) -> f64 {
     let query = PaddedBytes::from_bytes::<NucMatrix>(beta, max_block_size);
 
     // set up parameters for how matches, mismatches, and gaps are scored
-    let mut scoring_matrix = NucMatrix::new_simple(0, 1);
-    scoring_matrix.set(b'N', b'A', 0);
-    scoring_matrix.set(b'N', b'T', 0);
-    scoring_matrix.set(b'N', b'G', 0);
-    scoring_matrix.set(b'N', b'C', 0);
+    let scoring_matrix = generate_score_matrix();
     let gap_penalty = Gaps {
         open: -2,
         extend: -1,
     };
-    eprintln!("{:?}", scoring_matrix);
 
     // instantiate an aligner
     let mut aligner = Block::<true, false>::new(query.len(), reference.len(), max_block_size);
@@ -135,7 +221,7 @@ trait DistanceCalculator {
 impl DistanceCalculator for DistanceMethods {
     fn calculate_distance(&self, s1: &str, s2: &str) -> f64 {
         match self {
-            DistanceMethods::BlockAlignment => nuc_aware_dist(s1.as_bytes(), s2.as_bytes()),
+            DistanceMethods::BlockAlignment => block_distance(s1.as_bytes(), s2.as_bytes()),
             DistanceMethods::Hamming => hamming(s1.as_bytes(), s2.as_bytes()) as f64,
             DistanceMethods::Levenshtein => levenshtein(s1.as_bytes(), s2.as_bytes()) as f64,
             DistanceMethods::DamerauLevenshtein => damerau_levenshtein(s1, s2) as f64,

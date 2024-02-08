@@ -97,7 +97,7 @@ enum Commands {
 
     #[clap(
         about = "Compute a symmetric pairwise distance matrix based on how dissimilar sequences in the provided FASTA are to one another.",
-        aliases = &["distmat", "dm"]
+        aliases = &["distmat", "dm", "dist"]
     )]
     DistanceMatrix {
         /// FASTA format file of sequences
