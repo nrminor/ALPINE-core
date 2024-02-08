@@ -111,7 +111,7 @@ fn nuc_aware_dist(alpha: &[u8], beta: &[u8]) -> f64 {
     let query = PaddedBytes::from_bytes::<NucMatrix>(beta, max_block_size);
 
     // set up parameters for how matches, mismatches, and gaps are scored
-    let mut scoring_matrix = NucMatrix::new_simple(1, -1);
+    let mut scoring_matrix = NucMatrix::new_simple(0, 1);
     scoring_matrix.set(b'N', b'A', 0);
     scoring_matrix.set(b'N', b'T', 0);
     scoring_matrix.set(b'N', b'G', 0);
