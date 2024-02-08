@@ -211,7 +211,7 @@ fn block_distance(alpha: &[u8], beta: &[u8]) -> f64 {
     );
 
     // return the final score
-    aligner.res().score as f64
+    -aligner.res().score as f64
 }
 
 trait DistanceCalculator {
