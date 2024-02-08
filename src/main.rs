@@ -45,7 +45,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    #[clap(about = "Replace FASTA gap symbols '-' with masked bases 'N'.")]
+    #[clap(
+        about = "Replace FASTA gap symbols '-' with masked bases 'N'.",
+        aliases = &["rg", "gap"]
+    )]
     ReplaceGaps {
         /// FASTA format file of sequences. Reads from stdin if no path is provided.
         #[arg(short, long, required = false)]
@@ -57,7 +60,8 @@ enum Commands {
     },
 
     #[clap(
-        about = "Filter out FASTA records with more than the desired number of masked 'N' bases."
+        about = "Filter out FASTA records with more than the desired number of masked 'N' bases.",
+        aliases = &["fbn", "mask", "nbase"]
     )]
     FilterByN {
         /// FASTA format file of sequences
@@ -78,7 +82,8 @@ enum Commands {
     },
 
     #[clap(
-        about = "Use collection dates from FASTA record metadata to sort all FASTA records into a separate FASTA for each year-month combination."
+        about = "Use collection dates from FASTA record metadata to sort all FASTA records into a separate FASTA for each year-month combination.",
+        aliases = &["month", "sbm"]
     )]
     SeparateByMonth {
         /// FASTA format file of sequences. Reads from stdin if no path is provided.
@@ -91,7 +96,8 @@ enum Commands {
     },
 
     #[clap(
-        about = "Compute a symmetric pairwise distance matrix based on how dissimilar sequences in the provided FASTA are to one another."
+        about = "Compute a symmetric pairwise distance matrix based on how dissimilar sequences in the provided FASTA are to one another.",
+        aliases = &["distmat", "dm"]
     )]
     DistanceMatrix {
         /// FASTA format file of sequences
