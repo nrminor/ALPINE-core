@@ -15,7 +15,6 @@ use std::io::ErrorKind;
 use std::ops::Mul;
 use std::sync::Arc;
 use textdistance::{
-    nstr::{lcsseq, lcsstr},
     str::{damerau_levenshtein, jaro_winkler, ratcliff_obershelp, smith_waterman},
     str::{entropy_ncd, jaccard},
 };
@@ -23,7 +22,7 @@ use textdistance::{
 #[derive(ValueEnum, Debug, Clone, PartialEq)]
 pub enum DistanceMethods {
     /// Default distance based on block-alignment
-    Default,
+    BlockAlignment,
 
     /// Hamming edit distance (NOTE: Only works with aligned sequences)
     Hamming,
@@ -43,12 +42,6 @@ pub enum DistanceMethods {
     /// Ratcliff-Obershelp/Gestalt pattern matching sequence-based distance
     RatcliffObershelp,
 
-    /// Longest Common SubSequence distance
-    LCSSeq,
-
-    /// Longest Common SubString
-    LCSStr,
-
     /// Jaccard token/kmer-based distance
     Jaccard,
 
@@ -62,15 +55,13 @@ impl fmt::Display for DistanceMethods {
             f,
             "{}",
             match self {
-                DistanceMethods::Default => "block-alignment",
+                DistanceMethods::BlockAlignment => "block-alignment",
                 DistanceMethods::Hamming => "hamming",
                 DistanceMethods::Levenshtein => "levenshtein",
                 DistanceMethods::DamerauLevenshtein => "damerau-levenshtein",
                 DistanceMethods::JaroWinkler => "jaro-winkler",
                 DistanceMethods::SmithWaterman => "smith-waterman",
                 DistanceMethods::RatcliffObershelp => "ratcliff-obershelp",
-                DistanceMethods::LCSSeq => "lcs-seq",
-                DistanceMethods::LCSStr => "lcs-str",
                 DistanceMethods::Jaccard => "jaccard",
                 DistanceMethods::Entropy => "entropy",
             }
@@ -120,6 +111,7 @@ fn nuc_aware_dist(alpha: &[u8], beta: &[u8]) -> f64 {
         open: -2,
         extend: -1,
     };
+    eprintln!("{:?}", scoring_matrix);
 
     // instantiate an aligner
     let mut aligner = Block::<true, false>::new(query.len(), reference.len(), max_block_size);
@@ -143,16 +135,14 @@ trait DistanceCalculator {
 impl DistanceCalculator for DistanceMethods {
     fn calculate_distance(&self, s1: &str, s2: &str) -> f64 {
         match self {
-            DistanceMethods::Default => nuc_aware_dist(s1.as_bytes(), s2.as_bytes()),
+            DistanceMethods::BlockAlignment => nuc_aware_dist(s1.as_bytes(), s2.as_bytes()),
             DistanceMethods::Hamming => hamming(s1.as_bytes(), s2.as_bytes()) as f64,
             DistanceMethods::Levenshtein => levenshtein(s1.as_bytes(), s2.as_bytes()) as f64,
             DistanceMethods::DamerauLevenshtein => damerau_levenshtein(s1, s2) as f64,
             DistanceMethods::JaroWinkler => jaro_winkler(s1, s2),
             DistanceMethods::SmithWaterman => smith_waterman(s1, s2) as f64,
             DistanceMethods::RatcliffObershelp => ratcliff_obershelp(s1, s2),
-            DistanceMethods::LCSSeq => lcsseq(s1, s2),
-            DistanceMethods::LCSStr => lcsstr(s1, s2),
-            DistanceMethods::Jaccard => jaccard(s1, s2),
+            DistanceMethods::Jaccard => 1.0 - jaccard(s1, s2),
             DistanceMethods::Entropy => entropy_ncd(s1, s2),
         }
     }

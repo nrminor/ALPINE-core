@@ -111,7 +111,7 @@ enum Commands {
         stringency: Stringency,
 
         /// Choice of distance-calling methods.
-        #[arg(short, long, default_value_t = DistanceMethods::Default)]
+        #[arg(short, long, default_value_t = DistanceMethods::BlockAlignment)]
         distance_method: DistanceMethods,
     },
 }
