@@ -1,7 +1,6 @@
 use anyhow::anyhow;
 use anyhow::Result;
 use bio::alignment::distance::simd::{hamming, levenshtein};
-use block_aligner::percent_len;
 use block_aligner::{scan_block::*, scores::*};
 use clap::ValueEnum;
 use derive_new::new;
@@ -186,14 +185,15 @@ fn generate_score_matrix() -> NucMatrix {
 
 fn block_distance(alpha: &[u8], beta: &[u8]) -> f64 {
     // set up parameters for alignment
-    let (min_block_size, max_block_size) = if beta.len() <= alpha.len() {
-        (percent_len(beta.len(), 0.01), percent_len(beta.len(), 0.1))
-    } else {
-        (
-            percent_len(alpha.len(), 0.01),
-            percent_len(alpha.len(), 0.1),
-        )
-    };
+    // let (min_block_size, max_block_size) = if beta.len() <= alpha.len() {
+    //     (percent_len(beta.len(), 0.01), percent_len(beta.len(), 0.1))
+    // } else {
+    //     (
+    //         percent_len(alpha.len(), 0.01),
+    //         percent_len(alpha.len(), 0.1),
+    //     )
+    // };
+    let (min_block_size, max_block_size) = (32, 256);
 
     // pack nucleotide bytes into SIMD-able blocks
     let reference = PaddedBytes::from_bytes::<NucMatrix>(alpha, max_block_size);
