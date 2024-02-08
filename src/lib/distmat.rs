@@ -194,10 +194,7 @@ fn block_distance(alpha: &[u8], beta: &[u8]) -> f64 {
 
     // set up parameters for how matches, mismatches, and gaps are scored
     let scoring_matrix = generate_score_matrix();
-    let gap_penalty = Gaps {
-        open: -2,
-        extend: -1,
-    };
+    let gap_penalty = Gaps { open: 1, extend: 1 };
 
     // instantiate an aligner
     let mut aligner = Block::<true, false>::new(query.len(), reference.len(), max_block_size);
