@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 use anyhow::Result;
 use bio::alignment::distance::simd::{hamming, levenshtein};
+use block_aligner::percent_len;
 use block_aligner::{scan_block::*, scores::*};
 use clap::ValueEnum;
 use derive_new::new;
@@ -13,6 +14,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::io::ErrorKind;
 use std::ops::Mul;
+use std::rc::Rc;
 use std::sync::Arc;
 use textdistance::{
     str::{damerau_levenshtein, jaro_winkler, ratcliff_obershelp, smith_waterman},
@@ -96,7 +98,7 @@ fn generate_score_matrix() -> NucMatrix {
     // generate mutable scoring matrix to use for constraining
     // the characters that will be counted toward mismatches.
     // Only A's, T's, G's, C's, U's, and -'s will count.
-    let mut scoring_matrix = NucMatrix::new_simple(0, -1);
+    let mut scoring_matrix = NucMatrix::new_simple(0, -3);
 
     /*
     KEY FOR AMBIGUOUS BASES
@@ -114,86 +116,36 @@ fn generate_score_matrix() -> NucMatrix {
     V: Not T or U (A or C or G)
     */
 
-    // account for masked "any" bases, N
-    scoring_matrix.set(b'N', b'A', 0);
-    scoring_matrix.set(b'N', b'T', 0);
-    scoring_matrix.set(b'N', b'G', 0);
-    scoring_matrix.set(b'N', b'C', 0);
-
-    // account for any purine bases, R
-    scoring_matrix.set(b'R', b'A', 0);
-    scoring_matrix.set(b'R', b'T', 0);
-    scoring_matrix.set(b'R', b'G', 0);
-    scoring_matrix.set(b'R', b'C', 0);
-
-    // account for any Pyrimidine bases, Y
-    scoring_matrix.set(b'Y', b'A', 0);
-    scoring_matrix.set(b'Y', b'T', 0);
-    scoring_matrix.set(b'Y', b'G', 0);
-    scoring_matrix.set(b'Y', b'C', 0);
-
-    // account for any Keto bases, K
-    scoring_matrix.set(b'K', b'A', 0);
-    scoring_matrix.set(b'K', b'T', 0);
-    scoring_matrix.set(b'K', b'G', 0);
-    scoring_matrix.set(b'K', b'C', 0);
-
-    // account for any amino bases, M
-    scoring_matrix.set(b'M', b'A', 0);
-    scoring_matrix.set(b'M', b'T', 0);
-    scoring_matrix.set(b'M', b'G', 0);
-    scoring_matrix.set(b'M', b'C', 0);
-
-    // account for any strong interaction bases, S
-    scoring_matrix.set(b'S', b'A', 0);
-    scoring_matrix.set(b'S', b'T', 0);
-    scoring_matrix.set(b'S', b'G', 0);
-    scoring_matrix.set(b'S', b'C', 0);
-
-    // account for and weak interaction bases, W
-    scoring_matrix.set(b'W', b'A', 0);
-    scoring_matrix.set(b'W', b'T', 0);
-    scoring_matrix.set(b'W', b'G', 0);
-    scoring_matrix.set(b'W', b'C', 0);
-
-    // account for any "not A" bases, B
-    scoring_matrix.set(b'B', b'A', 0);
-    scoring_matrix.set(b'B', b'T', 0);
-    scoring_matrix.set(b'B', b'G', 0);
-    scoring_matrix.set(b'B', b'C', 0);
-
-    // account for and "not C" bases, D
-    scoring_matrix.set(b'D', b'A', 0);
-    scoring_matrix.set(b'D', b'T', 0);
-    scoring_matrix.set(b'D', b'G', 0);
-    scoring_matrix.set(b'D', b'C', 0);
-
-    // account for any "not G" bases, H
-    scoring_matrix.set(b'H', b'A', 0);
-    scoring_matrix.set(b'H', b'T', 0);
-    scoring_matrix.set(b'H', b'G', 0);
-    scoring_matrix.set(b'H', b'C', 0);
-
-    // account for any "not T or U" bases, V
-    scoring_matrix.set(b'V', b'A', 0);
-    scoring_matrix.set(b'V', b'T', 0);
-    scoring_matrix.set(b'V', b'G', 0);
-    scoring_matrix.set(b'V', b'C', 0);
+    let new_cost = 0;
+    let ambig_bases = Rc::from(&[
+        b'N', b'R', b'Y', b'K', b'M', b'S', b'W', b'B', b'D', b'H', b'V',
+    ]);
+    for i in ambig_bases.iter() {
+        for j in ambig_bases.iter() {
+            scoring_matrix.set(*i, *j, new_cost);
+        }
+    }
 
     scoring_matrix
 }
 
 fn block_distance(alpha: &[u8], beta: &[u8]) -> f64 {
     // set up parameters for alignment
-    // let (min_block_size, max_block_size) = if beta.len() <= alpha.len() {
-    //     (percent_len(beta.len(), 0.01), percent_len(beta.len(), 0.1))
-    // } else {
-    //     (
-    //         percent_len(alpha.len(), 0.01),
-    //         percent_len(alpha.len(), 0.1),
-    //     )
-    // };
-    let (min_block_size, max_block_size) = (32, 256);
+    let (min_block_size, max_block_size) = if beta.len() <= alpha.len() {
+        let beta_perc = percent_len(beta.len(), 0.01);
+        if beta_perc < 32 {
+            (32, 256)
+        } else {
+            (beta_perc, percent_len(alpha.len(), 0.1))
+        }
+    } else {
+        let alpha_perc = percent_len(alpha.len(), 0.01);
+        if alpha_perc < 32 {
+            (32, 256)
+        } else {
+            (alpha_perc, percent_len(alpha.len(), 0.1))
+        }
+    };
 
     // pack nucleotide bytes into SIMD-able blocks
     let reference = PaddedBytes::from_bytes::<NucMatrix>(alpha, max_block_size);
